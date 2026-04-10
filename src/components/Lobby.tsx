@@ -483,7 +483,7 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
         <div className="w-full max-w-xl px-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
           <div className="text-center mb-10">
             <h2 className="font-display text-5xl text-gold mb-3 tracking-tight">Multiplayer</h2>
-            <p className="text-white/40 text-sm tracking-wide">Enter the arena. Choose to host a new match or join a friend's room.</p>
+            <p className="text-white/40 text-sm tracking-wider">Enter the arena. Choose to host a new match or join a friend's room.</p>
           </div>
           
           {error && (
