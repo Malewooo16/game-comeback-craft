@@ -1,24 +1,124 @@
 import { useGame } from '../game/useGame';
-import { cardUrl, Card } from '../game/engine';
+import { useServerMultiplayerGame, ServerMultiplayerGameConfig } from '../hooks/useServerMultiplayerGame';
+import { cardUrl, Card } from '../game/gameState';
 
-const LastCardGame = () => {
-  const {
-    state, engine, toastMsg, statusMsg, modal, setModal,
-    newGame, playCard, playStack, undoStackCard, drawCard, callLastCard, rotateHand
-  } = useGame();
+interface LastCardGameProps {
+  config?: {
+    mode: 'local' | 'multiplayer';
+    cpuCount?: 1 | 2 | 3;
+    gameId?: string;
+    playerId?: number;
+  };
+  onBackToMode?: () => void;
+}
 
-  const G = state;
-  const player = G.players[0];
+const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
+  // Use appropriate hook based on game mode
+  const localGame = useGame(config?.cpuCount);
+  
+  let gameState, gameManager, toastMsg, statusMsg, modal, setModal, playCard, playStack, undoStackCard, drawCard, callLastCard, rotateHand;
+
+  if (config?.mode === 'multiplayer' && config.gameId && config.playerId !== undefined) {
+    // Multiplayer mode with server sync
+    const serverConfig: ServerMultiplayerGameConfig = {
+      gameId: config.gameId,
+      localPlayerId: config.playerId,
+      players: [],
+    };
+    const multiGame = useServerMultiplayerGame(serverConfig);
+    gameState = multiGame.state;
+    toastMsg = multiGame.toastMsg;
+    statusMsg = multiGame.statusMsg;
+    modal = multiGame.modal;
+    setModal = multiGame.setModal;
+    playCard = multiGame.playCard;
+    playStack = multiGame.playStack;
+    undoStackCard = multiGame.undoStackCard;
+    drawCard = multiGame.drawCard;
+    callLastCard = multiGame.callLastCard;
+    rotateHand = multiGame.rotateHand;
+    gameManager = { canCallLastCard: multiGame.canCallLastCard, isPlayable: multiGame.isPlayable };
+  } else {
+    // Local mode (default)
+    gameState = localGame.state;
+    gameManager = localGame.manager;
+    toastMsg = localGame.toastMsg;
+    statusMsg = localGame.statusMsg;
+    modal = localGame.modal;
+    setModal = localGame.setModal;
+    playCard = localGame.playCard;
+    playStack = localGame.playStack;
+    undoStackCard = localGame.undoStackCard;
+    drawCard = localGame.drawCard;
+    callLastCard = localGame.callLastCard;
+    rotateHand = localGame.rotateHand;
+  }
+
+  // Guard against undefined state during initialization
+  if (!gameState || !gameManager) {
+    return (
+      <div className="w-screen h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
+        <div className="text-center">
+          <div className="text-4xl mb-4">🎮</div>
+          <p className="text-foreground text-lg">Initializing game...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Guard against multiplayer game with no players yet
+  if (!gameState.players || gameState.players.length === 0) {
+    return (
+      <div className="w-screen h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
+        <div className="text-center">
+          <div className="text-4xl mb-4">⏳</div>
+          <p className="text-foreground text-lg">Waiting for players to join...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const G = gameState;
+  const localPlayerId = config?.mode === 'multiplayer' ? config.playerId : 0;
+  const player = G.players[localPlayerId];
   const topCard = G.discard[G.discard.length - 1];
-  const isPlayerTurn = G.turnIndex === 0 && !G.over;
-  const canLC = player && engine.canCallLastCard(player) && !player.lastCalled && !G.over;
+  const currentPlayer = G.players[G.turnIndex];
+  const isEliminated = player?.isEliminated;
+  const isPlayerTurn = G.turnIndex === localPlayerId && !G.over && !isEliminated;
+  
+  // Last Card Button Logic:
+  // 1. Player must have 1 card or all cards of same value
+  // 2. Player must NOT have called it yet
+  // 3. Game must not be over
+  // 4. Player must not be eliminated
+  const canLC = player && 
+                gameManager.canCallLastCard(player) && 
+                !player.lastCalled && 
+                !G.over && 
+                !isEliminated;
+  
   const hasStack = G.stack.length > 0 && isPlayerTurn;
   const showMore = player && player.hand.length > 7;
+  
+  // Get opponent for multiplayer
+  const opponent = config?.mode === 'multiplayer' && G.players.length > 1 
+    ? G.players.find((_, idx) => idx !== localPlayerId)
+    : null;
+  const isOpponentTurn = opponent && G.turnIndex === G.players.indexOf(opponent) && !G.over;
+  
+  // Compute correct status message
+  let computedStatusMsg = currentPlayer 
+    ? (G.turnIndex === localPlayerId ? "Your turn" : `${currentPlayer.name}'s turn`)
+    : statusMsg;
+  
+  if (isEliminated) {
+    computedStatusMsg = "You are spectating (Eliminated)";
+  }
 
   // Compute visible hand cards
   const MAX_VISIBLE = 7;
   const handCards: { card: Card; realIndex: number }[] = [];
-  if (player && player.hand.length > 0) {
+  if (player && player.hand.length > 0 && !isEliminated) {
     const n = player.hand.length;
     const offset = (G.offset % n + n) % n;
     const vis = Math.min(n, MAX_VISIBLE);
@@ -35,12 +135,26 @@ const LastCardGame = () => {
   const showRules = () => {
     setModal({
       title: '📖 Rules',
-      message: 'Match suit or number to play.\n\n🃏 2 → Draw 2 (stackable)\n🃏 Joker → Draw 5 + Ghost Match\n🃏 7 → Skip next player\n🃏 8 → Reverse direction\n🃏 Jack → Bridge (Any card can follow!)\n\nStack → Play multiple same-rank cards!\n\nCall "Last Card!" or get +2 penalty!'
+      message: 'Match suit or number to play.\n\n🃏 2 → Draw 2 (stackable)\n🃏 Joker → Draw 5 + Ghost Match\n🃏 7 → Skip next player\n🃏 8 → Reverse direction\n🃏 Jack → Bridge (Any card can follow!)\n\nStack → Play multiple same-rank cards!\n\nCall "Last Card!" or get +2 penalty!\n\nRound Elimination:\nWhen a player wins, everyone else counts points. Joker=50, Jack=25, 2=20, King=4, Queen=5, Ace=1. Highest points is eliminated!'
     });
   };
 
+  // Show player count for debugging
+  const debugPlayers = (
+    <div className="absolute top-3 left-4 bg-black/60 border border-gold/30 px-2 py-1 rounded text-[10px] text-gold/60 z-50">
+      Players: {G.players.length} | Turn: {G.turnIndex} ({G.players[G.turnIndex]?.name})
+    </div>
+  );
+
   return (
     <div className="w-screen h-screen flex flex-col relative font-sans">
+      {/* Spectator Overlay */}
+      {isEliminated && !G.over && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/60 border border-gold/30 px-4 py-1.5 rounded-full text-gold/80 text-xs font-bold tracking-[2px] uppercase z-[50] backdrop-blur-sm animate-pulse">
+          Spectating
+        </div>
+      )}
+
       {/* Table */}
       <div className="flex-1 relative flex items-center justify-center"
         style={{
@@ -54,6 +168,9 @@ const LastCardGame = () => {
           style={{ writingMode: 'vertical-rl' }}>
           Last Card
         </div>
+        
+        {/* Debug info */}
+        {debugPlayers}
 
         {/* Rules button */}
         <button onClick={showRules}
@@ -62,27 +179,45 @@ const LastCardGame = () => {
         </button>
 
         {/* Opponents */}
-        {G.players.filter(p => p.isCPU).map(p => {
+        {G.players.filter(p => p.id !== localPlayerId).map(p => {
+          // Calculate relative position based on localPlayerId
+          // 0: local bottom, 1: left, 2: top, 3: right (clockwise)
+          const numPlayers = G.players.length;
+          const relativeIdx = (p.id - localPlayerId + numPlayers) % numPlayers;
+          
           const positions: Record<number, string> = {
-            1: 'left-10 top-1/2 -translate-y-1/2',
-            2: 'top-3 left-1/2 -translate-x-1/2',
-            3: 'right-10 top-1/2 -translate-y-1/2',
+            1: 'left-10 top-1/2 -translate-y-1/2',   // Left
+            2: 'top-3 left-1/2 -translate-x-1/2',     // Top
+            3: 'right-10 top-1/2 -translate-y-1/2',  // Right
           };
+
+          // If only 2 players, put opponent at top
+          const positionClass = numPlayers === 2 ? positions[2] : (positions[relativeIdx] || positions[2]);
+          
           return (
-            <div key={p.id} className={`absolute flex flex-col items-center gap-1 z-[15] ${positions[p.id]}`}>
+            <div key={p.id} className={`absolute flex flex-col items-center gap-1 z-[15] ${positionClass} ${p.isEliminated ? 'opacity-40 grayscale-[30%]' : ''}`}>
               <div className="text-foreground/60 text-[11px] tracking-wider uppercase flex items-center gap-1.5">
                 <span className={`w-2 h-2 rounded-full bg-gold shadow-[0_0_8px_hsl(var(--gold))] ${G.turnIndex === p.id ? 'animate-pulse' : 'opacity-0'}`} />
-                <span>{p.name}</span>
+                <span>{p.name} {p.isEliminated ? '(OUT)' : ''}</span>
+                {p.points !== undefined && p.points > 0 && (
+                  <span className="text-gold/40 text-[9px] ml-1">[{p.points}pts]</span>
+                )}
               </div>
-              <div className="flex">
-                {p.hand.map((_, i) => (
-                  <div key={i} className="w-9 h-[50px] rounded-[5px] border-2 border-gold/50 flex-shrink-0 -mx-1"
-                    style={{
-                      background: 'linear-gradient(135deg, #1a237e 0%, #283593 50%, #1a237e 100%)',
-                      boxShadow: '2px 2px 6px rgba(0,0,0,0.4)',
-                    }} />
-                ))}
-              </div>
+              {!p.isEliminated ? (
+                <div className="flex">
+                  {p.hand.map((card, i) => (
+                    <div key={i} className="w-9 h-[50px] rounded-[5px] border-2 border-gold/50 flex-shrink-0 -mx-1"
+                      style={{
+                        background: 'linear-gradient(135deg, #1a237e 0%, #283593 50%, #1a237e 100%)',
+                        boxShadow: '2px 2px 6px rgba(0,0,0,0.4)',
+                      }}>
+                      <div className="w-full h-full flex items-center justify-center text-gold/40 text-lg">♠</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[10px] text-destructive/60 font-bold uppercase tracking-widest mt-1">Eliminated</div>
+              )}
               {/* Opp stack */}
               {G.turnIndex === p.id && G.oppStack.length > 0 && (
                 <div className="flex items-center justify-center min-h-[50px]">
@@ -103,7 +238,8 @@ const LastCardGame = () => {
           <div className="flex gap-8 items-center">
             {/* Draw pile */}
             <div className="text-center">
-              <div className="relative cursor-pointer group" onClick={drawCard}>
+              <div className="relative cursor-pointer group" onClick={isPlayerTurn ? drawCard : undefined}
+                style={{ opacity: isPlayerTurn ? 1 : 0.5 }}>
                 <div className="w-[72px] h-[101px] rounded-[7px] border-2 border-gold/50 flex items-center justify-center transition-transform group-hover:-translate-y-1"
                   style={{
                     background: 'linear-gradient(135deg, #1a237e 0%, #283593 50%, #1a237e 100%)',
@@ -147,8 +283,8 @@ const LastCardGame = () => {
             <div className="relative flex items-center justify-center min-w-[180px] min-h-[110px]">
               {G.stack.map((c, i) => (
                 <div key={i}
-                  onClick={() => undoStackCard(i)}
-                  className={`absolute cursor-pointer transition-all duration-300 ${i === G.stack.length - 1 ? 'drop-shadow-[0_0_12px_hsl(var(--gold)/0.9)] z-[100]' : ''}`}
+                  onClick={() => isPlayerTurn && undoStackCard(i)}
+                  className={`absolute transition-all duration-300 ${isPlayerTurn ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'} ${i === G.stack.length - 1 ? 'drop-shadow-[0_0_12px_hsl(var(--gold)/0.9)] z-[100]' : ''}`}
                   style={{ transform: `translateX(${(i - 1) * 30}px) rotate(${(i - 1) * 8}deg)` }}>
                   <div className="w-[72px] h-[101px] rounded-[7px] bg-white border-[1.5px] border-gray-300 overflow-hidden shadow-lg">
                     <img src={cardUrl(c)} alt={c.id} className="w-full h-full object-contain" />
@@ -208,7 +344,7 @@ const LastCardGame = () => {
               const lift = Math.abs(angle) * 0.4;
               let ok = false;
               if (isPlayerTurn) {
-                try { ok = engine.isPlayable(card); } catch { ok = false; }
+                try { ok = gameManager.isPlayable(card); } catch { ok = false; }
               }
               return (
                 <div key={card.id + '-' + i}
@@ -261,9 +397,9 @@ const LastCardGame = () => {
 
       {/* Status bar */}
       <div className="bg-black/50 border-t border-gold/20 px-5 py-2 flex items-center gap-3 min-h-[40px] z-[20]">
-        <span className="text-gold-light text-sm font-medium flex-1">{statusMsg}</span>
+        <span className="text-gold-light text-sm font-medium flex-1">{computedStatusMsg}</span>
         <span className="bg-gold/15 border border-gold/40 text-gold text-[11px] px-2.5 py-0.5 rounded-full tracking-wider">
-          {G.players[G.turnIndex]?.name.toUpperCase()}{G.turnIndex === 0 ? 'R TURN' : "'S TURN"}
+          {G.turnIndex === localPlayerId ? 'YOUR TURN' : `${G.players[G.turnIndex]?.name.toUpperCase()}'S TURN`}
         </span>
       </div>
 
@@ -273,9 +409,18 @@ const LastCardGame = () => {
           <div className="bg-gradient-to-br from-[#1a2a4a] to-[#0d1f3c] border border-gold/50 rounded-2xl p-8 text-center max-w-[380px] w-[90%] shadow-[0_24px_80px_rgba(0,0,0,0.8)]">
             <h2 className="font-display text-gold-light text-2xl mb-3">{modal.title}</h2>
             <p className="text-foreground/75 text-sm mb-6 leading-relaxed whitespace-pre-line">{modal.message}</p>
-            <button onClick={() => { setModal(null); if (modal.title !== '📖 Rules') newGame(); }}
+            <button onClick={() => {
+              setModal(null);
+              if (modal.title !== '📖 Rules') {
+                if (onBackToMode) {
+                  onBackToMode();
+                } else if (localGame.newGame) {
+                  localGame.newGame();
+                }
+              }
+            }}
               className="bg-gradient-to-br from-gold to-gold-light text-primary-foreground font-bold text-sm px-6 py-3 rounded-lg tracking-wider uppercase hover:scale-105 transition-transform">
-              {modal.title === '📖 Rules' ? 'Close' : 'Play Again'}
+              {modal.title === '📖 Rules' ? 'Close' : 'Back to Menu'}
             </button>
           </div>
         </div>
