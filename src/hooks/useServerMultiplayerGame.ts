@@ -282,7 +282,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     setState(prevState => {
       if (!prevState) return prevState;
       const newState = { ...prevState };
-      const player = newState.players[config.localPlayerId];
+      const player = newState.players.find(p => p.id === config.localPlayerId);
       if (player) {
         const n = player.hand.length;
         if (n > 0) {
@@ -301,6 +301,10 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     if (!state) return false;
     return rules.isPlayable(state, card);
   }, [state]);
+
+  const getLocalPlayerIndex = useCallback((players: any[], playerId: number) => {
+    return players.findIndex(p => p.id === playerId);
+  }, []);
 
   const syncRequest = useCallback(async () => {
     try {
