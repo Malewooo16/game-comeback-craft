@@ -223,7 +223,7 @@ export class LocalGameManager {
    * Undo stack card
    */
   undoStackCard(stackIndex: number): GameState {
-    const result = rules.undoStackCard(this.state, stackIndex);
+    const result = rules.undoStackCard(this.state, 0, stackIndex);
     this.state = result.state;
     return this.state;
   }

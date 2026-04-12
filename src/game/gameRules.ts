@@ -327,6 +327,13 @@ export function playCard(
       player.lastCalled = false;
       return { state: resultState, moveType: 'play', success: true, message: 'Card played' };
     }
+    // Note: If otherJokers.length > 0, it falls through to the stack logic below
+  }
+
+  // If a stack is already active, add to it (for non-jokers, or jokers with siblings)
+  if (newState.stack.length > 0) {
+    newState.stack.push(card);
+    return { state: newState, moveType: 'play', success: true, message: 'Card added to stack' };
   }
 
   // For jacks: always create stack (to allow bridging with any card)
@@ -335,42 +342,36 @@ export function playCard(
     return { state: newState, moveType: 'play', success: true, message: 'Stack created' };
   }
 
-  if (newState.stack.length === 0) {
-    const sameValue = player.hand.filter(c => c.value === card.value);
-    if (sameValue.length >= 1) {
-      // Create stack
-      newState.stack.push(card);
-      return { state: newState, moveType: 'play', success: true, message: 'Stack created' };
-    } else {
-      // Play directly to discard
-      newState.discard.push(card);
-      let resultState = applySpecialCard(newState, card, wildSuit);
-
-      const victory = checkVictory(resultState, player, [card]);
-      if (victory.won) {
-        resultState.over = true;
-        return {
-          state: resultState,
-          moveType: 'play',
-          success: true,
-          message: 'Victory',
-          winner: player,
-        };
-      }
-
-      if (victory.reason === 'not-called') {
-        resultState = applyVictoryPenalty(resultState, player);
-      } else if (victory.reason === 'jack-bridge' || victory.reason === 'special-finish') {
-        resultState = applyVictoryDraw(resultState, player);
-      }
-
-      player.lastCalled = false;
-      return { state: resultState, moveType: 'play', success: true, message: 'Card played' };
-    }
-  } else {
-    // Add to existing stack
+  const sameValue = player.hand.filter(c => c.value === card.value);
+  if (sameValue.length >= 1) {
+    // Create stack
     newState.stack.push(card);
-    return { state: newState, moveType: 'play', success: true, message: 'Card added to stack' };
+    return { state: newState, moveType: 'play', success: true, message: 'Stack created' };
+  } else {
+    // Play directly to discard
+    newState.discard.push(card);
+    let resultState = applySpecialCard(newState, card, wildSuit);
+
+    const victory = checkVictory(resultState, player, [card]);
+    if (victory.won) {
+      resultState.over = true;
+      return {
+        state: resultState,
+        moveType: 'play',
+        success: true,
+        message: 'Victory',
+        winner: player,
+      };
+    }
+
+    if (victory.reason === 'not-called') {
+      resultState = applyVictoryPenalty(resultState, player);
+    } else if (victory.reason === 'jack-bridge' || victory.reason === 'special-finish') {
+      resultState = applyVictoryDraw(resultState, player);
+    }
+
+    player.lastCalled = false;
+    return { state: resultState, moveType: 'play', success: true, message: 'Card played' };
   }
 }
 
@@ -420,7 +421,7 @@ export function playStack(state: GameState, playerIndex: number, wildSuit?: stri
 /**
  * Remove card from stack and return to hand
  */
-export function undoStackCard(state: GameState, stackIndex: number): GameMoveResult {
+export function undoStackCard(state: GameState, playerIndex: number, stackIndex: number): GameMoveResult {
   const newState = { ...state, players: state.players.map(p => ({ ...p })) };
 
   if (stackIndex < 0 || stackIndex >= newState.stack.length) {
@@ -428,7 +429,7 @@ export function undoStackCard(state: GameState, stackIndex: number): GameMoveRes
   }
 
   const card = newState.stack.splice(stackIndex, 1)[0];
-  newState.players[0].hand.push(card);
+  newState.players[playerIndex].hand.push(card);
 
   return { state: newState, moveType: 'undoStack', success: true, message: 'Card removed from stack' };
 }

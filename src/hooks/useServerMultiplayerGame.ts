@@ -53,7 +53,17 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
           }
 
           if (updatedState.over) {
-            const winner = updatedState.players.find(p => p.hand.length === 0 && !p.victoryDrawPending);
+            // Priority 1: Check who was marked as winner by engine or has empty hand
+            let winner = updatedState.players.find(p => p.hand.length === 0 && !p.victoryDrawPending && !p.isEliminated);
+            
+            // Priority 2: In abandonment/elimination, search for the last standing player
+            if (!winner) {
+              const activePlayers = updatedState.players.filter(p => !p.isEliminated);
+              if (activePlayers.length === 1) {
+                winner = activePlayers[0];
+              }
+            }
+            
             setModal({
               title: winner?.id === config.localPlayerId ? 'You Win!' : (winner?.name || 'Someone') + ' Wins!',
               message: 'Game over!',
@@ -123,7 +133,8 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
           localPlayer.hand.splice(cardIndex, 1);
           newState.offset = localPlayer.hand.length > 0 ? newState.offset % localPlayer.hand.length : 0;
           
-          // For jokers, play immediately ONLY if it's the only one in hand
+          // Add to stack or discard
+          // SKIP JOKER PART - Keep original logic for jokers at top
           if (card.value === 'joker') {
             const otherJokers = localPlayer.hand.filter(c => c.value === 'joker');
             if (otherJokers.length === 0) {
@@ -131,6 +142,9 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
             } else {
               newState.stack.push(card);
             }
+          } else if (newState.stack.length > 0) {
+            // Add to existing stack
+            newState.stack.push(card);
           } else if (card.value === 'jack') {
             // For jacks, always create stack (to allow bridging)
             newState.stack.push(card);
@@ -189,19 +203,38 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     }
   }, [state, config.gameId, config.localPlayerId]);
 
-  const undoStackCard = useCallback((stackIndex: number) => {
+  const undoStackCard = useCallback(async (stackIndex: number) => {
     if (!state) return;
-    setState(prevState => {
-      if (!prevState || stackIndex < 0 || stackIndex >= prevState.stack.length) return prevState;
-      const newState = { ...prevState };
-      const card = newState.stack.splice(stackIndex, 1)[0];
-      const player = newState.players[config.localPlayerId];
-      if (player) {
-        player.hand.push(card);
-      }
-      return newState;
-    });
-  }, [state, config.localPlayerId]);
+
+    try {
+      // Optimistically update local state
+      setState(prevState => {
+        if (!prevState || stackIndex < 0 || stackIndex >= prevState.stack.length) return prevState;
+        const newState = { ...prevState, players: prevState.players.map(p => ({ ...p })) };
+        const card = newState.stack.splice(stackIndex, 1)[0];
+        const player = newState.players.find(p => p.id === config.localPlayerId);
+        if (player) {
+          player.hand.push(card);
+        }
+        return newState;
+      });
+
+      const move = {
+        gameId: config.gameId,
+        playerId: config.localPlayerId,
+        moveType: 'undoStack' as const,
+        payload: { stackIndex },
+        timestamp: Date.now(),
+        clientSequence: moveSequence.current++,
+      };
+
+      await clientRef.current.sendMove(move);
+    } catch (error) {
+      console.error('Failed to send move:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Failed to send move';
+      setToastMsg(errorMsg);
+    }
+  }, [state, config.gameId, config.localPlayerId]);
 
   const drawCard = useCallback(async () => {
     if (!state) return;
@@ -279,6 +312,34 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     }
   }, []);
 
+  const leaveGame = useCallback(async () => {
+    console.log('[useServerMultiplayerGame] leaveGame called');
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.error('[useServerMultiplayerGame] No token found for leaveGame');
+        return;
+      }
+      
+      const response = await fetch(`${import.meta.env.VITE_SERVER_URL || 'http://localhost:3001'}/api/games/${config.gameId}/leave`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ playerId: config.localPlayerId }),
+      });
+      
+      console.log('[useServerMultiplayerGame] leaveGame response:', response.status);
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('[useServerMultiplayerGame] leaveGame failed:', errorData);
+      }
+    } catch (error) {
+      console.error('[useServerMultiplayerGame] Failed to leave game on server:', error);
+    }
+  }, [config.gameId, config.localPlayerId]);
+
   return {
     state,
     toastMsg,
@@ -295,5 +356,6 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     canCallLastCard,
     isPlayable,
     syncRequest,
+    leaveGame,
   };
 }

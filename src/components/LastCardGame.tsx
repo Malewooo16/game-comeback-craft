@@ -1,6 +1,6 @@
 import { useGame } from '../game/useGame';
 import { useServerMultiplayerGame, ServerMultiplayerGameConfig } from '../hooks/useServerMultiplayerGame';
-import { cardUrl, Card } from '../game/gameState';
+import { cardUrl, Card } from '../game/engine';
 
 interface LastCardGameProps {
   config?: {
@@ -13,112 +13,146 @@ interface LastCardGameProps {
 }
 
 const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
-  // Use appropriate hook based on game mode
-  const localGame = useGame(config?.cpuCount);
-  
-  let gameState, gameManager, toastMsg, statusMsg, modal, setModal, playCard, playStack, undoStackCard, drawCard, callLastCard, rotateHand;
-
   if (config?.mode === 'multiplayer' && config.gameId && config.playerId !== undefined) {
-    // Multiplayer mode with server sync
-    const serverConfig: ServerMultiplayerGameConfig = {
-      gameId: config.gameId,
-      localPlayerId: config.playerId,
-      players: [],
-    };
-    const multiGame = useServerMultiplayerGame(serverConfig);
-    gameState = multiGame.state;
-    toastMsg = multiGame.toastMsg;
-    statusMsg = multiGame.statusMsg;
-    modal = multiGame.modal;
-    setModal = multiGame.setModal;
-    playCard = multiGame.playCard;
-    playStack = multiGame.playStack;
-    undoStackCard = multiGame.undoStackCard;
-    drawCard = multiGame.drawCard;
-    callLastCard = multiGame.callLastCard;
-    rotateHand = multiGame.rotateHand;
-    gameManager = { canCallLastCard: multiGame.canCallLastCard, isPlayable: multiGame.isPlayable };
-  } else {
-    // Local mode (default)
-    gameState = localGame.state;
-    gameManager = localGame.manager;
-    toastMsg = localGame.toastMsg;
-    statusMsg = localGame.statusMsg;
-    modal = localGame.modal;
-    setModal = localGame.setModal;
-    playCard = localGame.playCard;
-    playStack = localGame.playStack;
-    undoStackCard = localGame.undoStackCard;
-    drawCard = localGame.drawCard;
-    callLastCard = localGame.callLastCard;
-    rotateHand = localGame.rotateHand;
+    return <MultiplayerGameView config={config as any} onBackToMode={onBackToMode} />;
   }
+  return <LocalGameView config={config} onBackToMode={onBackToMode} />;
+};
 
-  // Guard against undefined state during initialization
-  if (!gameState || !gameManager) {
+const MultiplayerGameView = ({ config, onBackToMode }: { config: { gameId: string, playerId: number }, onBackToMode?: () => void }) => {
+  const serverConfig: ServerMultiplayerGameConfig = {
+    gameId: config.gameId,
+    localPlayerId: config.playerId,
+    players: [],
+  };
+  const multiGame = useServerMultiplayerGame(serverConfig);
+  
+  if (!multiGame.state) {
     return (
       <div className="w-screen h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
         <div className="text-center">
           <div className="text-4xl mb-4">🎮</div>
-          <p className="text-foreground text-lg">Initializing game...</p>
+          <p className="text-foreground text-lg italic tracking-widest uppercase opacity-50">Syncing with table...</p>
         </div>
       </div>
     );
   }
 
-  // Guard against multiplayer game with no players yet
-  if (!gameState.players || gameState.players.length === 0) {
+  const gameManager = { 
+    canCallLastCard: (p: any) => multiGame.canCallLastCard(p), 
+    isPlayable: (c: Card) => multiGame.isPlayable(c) 
+  };
+  
+  return (
+    <GameUI 
+      G={multiGame.state}
+      gameManager={gameManager}
+      toastMsg={multiGame.toastMsg}
+      statusMsg={multiGame.statusMsg}
+      modal={multiGame.modal}
+      setModal={multiGame.setModal}
+      playCard={multiGame.playCard}
+      playStack={multiGame.playStack}
+      undoStackCard={multiGame.undoStackCard}
+      drawCard={multiGame.drawCard}
+      callLastCard={multiGame.callLastCard}
+      rotateHand={multiGame.rotateHand}
+      leaveGame={multiGame.leaveGame}
+      onBackToMode={onBackToMode}
+      localPlayerIndex={multiGame.state.players.findIndex(p => p.id === config.playerId)}
+      mode="multiplayer"
+    />
+  );
+};
+
+const LocalGameView = ({ config, onBackToMode }: { config?: LastCardGameProps['config'], onBackToMode?: () => void }) => {
+  const localGame = useGame(config?.cpuCount);
+
+  if (!localGame.state || !localGame.manager) {
     return (
       <div className="w-screen h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
         <div className="text-center">
-          <div className="text-4xl mb-4">⏳</div>
-          <p className="text-foreground text-lg">Waiting for players to join...</p>
+          <div className="text-4xl mb-4">🎮</div>
+          <p className="text-foreground text-lg">Initializing local game...</p>
         </div>
       </div>
     );
   }
 
-  const G = gameState;
-  const localPlayerId = config?.mode === 'multiplayer' ? config.playerId : 0;
-  const player = G.players[localPlayerId];
+  const gameManager = { 
+    canCallLastCard: (p: any) => localGame.canCallLastCard(p), 
+    isPlayable: (c: Card) => localGame.isPlayable(c) 
+  };
+
+  return (
+    <GameUI 
+      G={localGame.state}
+      gameManager={gameManager}
+      toastMsg={localGame.toastMsg}
+      statusMsg={localGame.statusMsg}
+      modal={localGame.modal}
+      setModal={localGame.setModal}
+      playCard={localGame.playCard}
+      playStack={localGame.playStack}
+      undoStackCard={localGame.undoStackCard}
+      drawCard={localGame.drawCard}
+      callLastCard={localGame.callLastCard}
+      rotateHand={localGame.rotateHand}
+      newGame={localGame.newGame}
+      onBackToMode={onBackToMode}
+      localPlayerIndex={0}
+      mode="local"
+    />
+  );
+};
+
+interface GameUIProps {
+  G: any;
+  gameManager: any;
+  toastMsg: string | null;
+  statusMsg: string;
+  modal: any;
+  setModal: (m: any) => void;
+  playCard: (i: number) => void;
+  playStack: () => void;
+  undoStackCard: (i: number) => void;
+  drawCard: () => void;
+  callLastCard: () => void;
+  rotateHand: (d: number) => void;
+  leaveGame?: () => void;
+  newGame?: () => void;
+  onBackToMode?: () => void;
+  localPlayerIndex: number;
+  mode: 'local' | 'multiplayer';
+}
+
+const GameUI = ({
+  G, gameManager, toastMsg, statusMsg, modal, setModal, 
+  playCard, playStack, undoStackCard, drawCard, callLastCard, rotateHand,
+  leaveGame, newGame, onBackToMode, localPlayerIndex, mode
+}: GameUIProps) => {
+  const player = localPlayerIndex !== -1 ? G.players[localPlayerIndex] : null;
   const topCard = G.discard[G.discard.length - 1];
-  const currentPlayer = G.players[G.turnIndex];
   const isEliminated = player?.isEliminated;
-  const isPlayerTurn = G.turnIndex === localPlayerId && !G.over && !isEliminated;
+  const isPlayerTurn = G.turnIndex === localPlayerIndex && !G.over && !isEliminated;
   
-  // Last Card Button Logic:
-  // 1. Player must have 1 card or all cards of same value
-  // 2. Player must NOT have called it yet
-  // 3. Game must not be over
-  // 4. Player must not be eliminated
   const canLC = player && 
                 gameManager.canCallLastCard(player) && 
                 !player.lastCalled && 
                 !G.over && 
                 !isEliminated;
-  
-  const hasStack = G.stack.length > 0 && isPlayerTurn;
-  const showMore = player && player.hand.length > 7;
-  
-  // Get opponent for multiplayer
-  const opponent = config?.mode === 'multiplayer' && G.players.length > 1 
-    ? G.players.find((_, idx) => idx !== localPlayerId)
-    : null;
-  const isOpponentTurn = opponent && G.turnIndex === G.players.indexOf(opponent) && !G.over;
-  
-  // Compute correct status message
-  let computedStatusMsg = currentPlayer 
-    ? (G.turnIndex === localPlayerId ? "Your turn" : `${currentPlayer.name}'s turn`)
-    : statusMsg;
-  
-  if (isEliminated) {
-    computedStatusMsg = "You are spectating (Eliminated)";
-  }
+
+  const showRules = () => {
+    setModal({
+      title: '📖 Rules',
+      message: 'Match suit or number to play.\n\n🃏 2 → Draw 2 (stackable)\n🃏 Joker → Draw 5 + Ghost Match\n🃏 7 → Skip next player\n🃏 8 → Reverse direction\n🃏 Jack → Bridge (Any card can follow!)\n\nStack → Play multiple same-rank cards!\n\nCall "Last Card!" or get +2 penalty!'
+    });
+  };
 
   // Compute visible hand cards
   const MAX_VISIBLE = 7;
   const handCards: { card: Card; realIndex: number }[] = [];
-  if (player && player.hand.length > 0 && !isEliminated) {
+  if (player && player.hand.length > 0) {
     const n = player.hand.length;
     const offset = (G.offset % n + n) % n;
     const vis = Math.min(n, MAX_VISIBLE);
@@ -132,29 +166,13 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
   const step = handCards.length > 1 ? spread / (handCards.length - 1) : 0;
   const aStart = -spread / 2;
 
-  const showRules = () => {
-    setModal({
-      title: '📖 Rules',
-      message: 'Match suit or number to play.\n\n🃏 2 → Draw 2 (stackable)\n🃏 Joker → Draw 5 + Ghost Match\n🃏 7 → Skip next player\n🃏 8 → Reverse direction\n🃏 Jack → Bridge (Any card can follow!)\n\nStack → Play multiple same-rank cards!\n\nCall "Last Card!" or get +2 penalty!\n\nRound Elimination:\nWhen a player wins, everyone else counts points. Joker=50, Jack=25, 2=20, King=4, Queen=5, Ace=1. Highest points is eliminated!'
-    });
-  };
-
-  // Show player count for debugging
-  const debugPlayers = (
-    <div className="absolute top-3 left-4 bg-black/60 border border-gold/30 px-2 py-1 rounded text-[10px] text-gold/60 z-50">
-      Players: {G.players.length} | Turn: {G.turnIndex} ({G.players[G.turnIndex]?.name})
-    </div>
-  );
+  // Map opponents to positions relative to localPlayerIndex
+  const opponents = G.players
+    .map((p: any, originalIndex: number) => ({ ...p, originalIndex }))
+    .filter((_: any, idx: number) => idx !== localPlayerIndex);
 
   return (
-    <div className="w-screen h-screen flex flex-col relative font-sans">
-      {/* Spectator Overlay */}
-      {isEliminated && !G.over && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/60 border border-gold/30 px-4 py-1.5 rounded-full text-gold/80 text-xs font-bold tracking-[2px] uppercase z-[50] backdrop-blur-sm animate-pulse">
-          Spectating
-        </div>
-      )}
-
+    <div className="w-screen h-screen flex flex-col relative font-sans overflow-hidden bg-[#0a0f1a]">
       {/* Table */}
       <div className="flex-1 relative flex items-center justify-center"
         style={{
@@ -168,62 +186,58 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
           style={{ writingMode: 'vertical-rl' }}>
           Last Card
         </div>
-        
-        {/* Debug info */}
-        {debugPlayers}
 
-        {/* Rules button */}
-        <button onClick={showRules}
-          className="absolute top-3 right-4 w-7 h-7 rounded-full bg-gold/10 border border-gold/30 text-gold text-sm flex items-center justify-center z-[25] hover:bg-gold/25 transition-colors">
-          ?
-        </button>
+        {/* Top Right Buttons */}
+        <div className="absolute top-3 right-4 flex items-center gap-2 z-[25]">
+          <button 
+            onClick={() => setModal({ 
+              title: 'Leave Game?', 
+              message: 'Are you sure you want to leave? This will result in a loss.' 
+            })}
+            className="px-3 py-1 rounded-full bg-red-500/10 border border-red-500/30 text-red-400 text-[10px] font-bold uppercase tracking-wider hover:bg-red-500/25 transition-colors shadow-lg"
+          >
+            Leave
+          </button>
+          <button 
+            onClick={showRules}
+            className="w-7 h-7 rounded-full bg-gold/10 border border-gold/30 text-gold text-sm flex items-center justify-center hover:bg-gold/25 transition-colors shadow-lg"
+          >
+            ?
+          </button>
+        </div>
 
         {/* Opponents */}
-        {G.players.filter(p => p.id !== localPlayerId).map(p => {
-          // Calculate relative position based on localPlayerId
-          // 0: local bottom, 1: left, 2: top, 3: right (clockwise)
-          const numPlayers = G.players.length;
-          const relativeIdx = (p.id - localPlayerId + numPlayers) % numPlayers;
-          
+        {opponents.map((p: any, i: number) => {
+          let posKey = i + 1;
+          if (opponents.length === 1) posKey = 2; // In 1v1, put opp at top
+
           const positions: Record<number, string> = {
-            1: 'left-10 top-1/2 -translate-y-1/2',   // Left
-            2: 'top-3 left-1/2 -translate-x-1/2',     // Top
-            3: 'right-10 top-1/2 -translate-y-1/2',  // Right
+            1: 'left-10 top-1/2 -translate-y-1/2',
+            2: 'top-3 left-1/2 -translate-x-1/2',
+            3: 'right-10 top-1/2 -translate-y-1/2',
           };
 
-          // If only 2 players, put opponent at top
-          const positionClass = numPlayers === 2 ? positions[2] : (positions[relativeIdx] || positions[2]);
-          
           return (
-            <div key={p.id} className={`absolute flex flex-col items-center gap-1 z-[15] ${positionClass} ${p.isEliminated ? 'opacity-40 grayscale-[30%]' : ''}`}>
-              <div className="text-foreground/60 text-[11px] tracking-wider uppercase flex items-center gap-1.5">
-                <span className={`w-2 h-2 rounded-full bg-gold shadow-[0_0_8px_hsl(var(--gold))] ${G.turnIndex === p.id ? 'animate-pulse' : 'opacity-0'}`} />
+            <div key={p.id} className={`absolute flex flex-col items-center gap-1 z-[15] ${positions[posKey] || positions[2]}`}>
+              <div className="text-foreground/60 text-[11px] tracking-wider uppercase flex items-center gap-1.5 mb-1">
+                <span className={`w-2 h-2 rounded-full bg-gold shadow-[0_0_8px_hsl(var(--gold))] ${G.turnIndex === p.originalIndex ? 'animate-pulse' : 'opacity-0'}`} />
                 <span>{p.name} {p.isEliminated ? '(OUT)' : ''}</span>
-                {p.points !== undefined && p.points > 0 && (
-                  <span className="text-gold/40 text-[9px] ml-1">[{p.points}pts]</span>
-                )}
               </div>
-              {!p.isEliminated ? (
-                <div className="flex">
-                  {p.hand.map((card, i) => (
-                    <div key={i} className="w-9 h-[50px] rounded-[5px] border-2 border-gold/50 flex-shrink-0 -mx-1"
-                      style={{
-                        background: 'linear-gradient(135deg, #1a237e 0%, #283593 50%, #1a237e 100%)',
-                        boxShadow: '2px 2px 6px rgba(0,0,0,0.4)',
-                      }}>
-                      <div className="w-full h-full flex items-center justify-center text-gold/40 text-lg">♠</div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-[10px] text-destructive/60 font-bold uppercase tracking-widest mt-1">Eliminated</div>
-              )}
+              <div className="flex">
+                {p.hand.map((_: any, cardIdx: number) => (
+                  <div key={cardIdx} className="w-9 h-[50px] rounded-[5px] border-[1px] border-gold/30 flex-shrink-0 -mx-1"
+                    style={{
+                      background: 'linear-gradient(135deg, #1a237e 0%, #283593 50%, #1a237e 100%)',
+                      boxShadow: '2px 2px 6px rgba(0,0,0,0.4)',
+                    }} />
+                ))}
+              </div>
               {/* Opp stack */}
-              {G.turnIndex === p.id && G.oppStack.length > 0 && (
-                <div className="flex items-center justify-center min-h-[50px]">
-                  {G.oppStack.map((c, i) => (
-                    <div key={i} className="w-9 h-[50px] rounded bg-white border border-gray-300 overflow-hidden shadow-lg"
-                      style={{ transform: `translateX(${(i - 1) * 15}px) rotate(${(i - 1) * 8}deg)` }}>
+              {G.turnIndex === p.originalIndex && (G.oppStack?.length > 0 || G.stack?.length > 0) && (
+                <div className="flex items-center justify-center min-h-[50px] mt-2">
+                  {(G.oppStack?.length > 0 ? G.oppStack : G.stack).map((c: Card, stackIdx: number, arr: Card[]) => (
+                    <div key={stackIdx} className="w-9 h-[50px] rounded bg-white border border-gray-300 overflow-hidden shadow-lg"
+                      style={{ transform: `translateX(${(stackIdx - (arr.length - 1) / 2) * 15}px) rotate(${(stackIdx - (arr.length - 1) / 2) * 8}deg)` }}>
                       <img src={cardUrl(c)} alt={c.id} className="w-full h-full object-contain" />
                     </div>
                   ))}
@@ -234,7 +248,7 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
         })}
 
         {/* Center */}
-        <div className="flex flex-col items-center gap-4 z-10">
+        <div className="flex flex-col items-center gap-4 z-10 scale-90 md:scale-100">
           <div className="flex gap-8 items-center">
             {/* Draw pile */}
             <div className="text-center">
@@ -251,7 +265,7 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
                   {G.deck.length}
                 </div>
               </div>
-              <div className="text-gold/50 text-[10px] tracking-[2px] uppercase mt-1.5">Draw</div>
+              <div className="text-gold/50 text-[10px] tracking-[2px] uppercase mt-1.5 font-bold">Draw</div>
             </div>
 
             {/* Direction */}
@@ -272,8 +286,8 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
                   </div>
                 )}
               </div>
-              <div className={`text-[10px] tracking-[2px] uppercase mt-1.5 ${G.stack.length > 0 ? 'text-emerald-400' : 'text-gold/50'}`}>
-                {G.stack.length > 0 ? 'Stack' : 'Discard'}
+              <div className={`text-[10px] tracking-[2px] uppercase mt-1.5 font-bold ${G.stack?.length > 0 ? 'text-emerald-400' : 'text-gold/50'}`}>
+                {G.stack?.length > 0 ? 'Stack' : 'Discard'}
               </div>
             </div>
           </div>
@@ -281,11 +295,13 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
           {/* Stack area */}
           <div className="flex items-center gap-4 min-h-[110px]">
             <div className="relative flex items-center justify-center min-w-[180px] min-h-[110px]">
-              {G.stack.map((c, i) => (
+              {isPlayerTurn && G.stack?.map((c: Card, i: number) => (
                 <div key={i}
                   onClick={() => isPlayerTurn && undoStackCard(i)}
                   className={`absolute transition-all duration-300 ${isPlayerTurn ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'} ${i === G.stack.length - 1 ? 'drop-shadow-[0_0_12px_hsl(var(--gold)/0.9)] z-[100]' : ''}`}
-                  style={{ transform: `translateX(${(i - 1) * 30}px) rotate(${(i - 1) * 8}deg)` }}>
+                  style={{ 
+                    transform: `translateX(${(i - (G.stack.length - 1) / 2) * 30}px) rotate(${(i - (G.stack.length - 1) / 2) * 8}deg)` 
+                  }}>
                   <div className="w-[72px] h-[101px] rounded-[7px] bg-white border-[1.5px] border-gray-300 overflow-hidden shadow-lg">
                     <img src={cardUrl(c)} alt={c.id} className="w-full h-full object-contain" />
                   </div>
@@ -296,23 +312,17 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
                   )}
                 </div>
               ))}
-              {G.stack.length > 0 && (
+              {isPlayerTurn && G.stack?.length > 0 && (
                 <div className="absolute -top-2.5 -right-2.5 bg-gradient-to-br from-destructive to-red-800 text-white text-[11px] font-bold w-6 h-6 rounded-full flex items-center justify-center z-[200] shadow-lg">
                   {G.stack.length}
                 </div>
               )}
             </div>
             <div className="flex gap-2">
-              {hasStack && G.stack.length === 1 && (
+              {isPlayerTurn && G.stack?.length >= 1 && (
                 <button onClick={playStack}
                   className="bg-gradient-to-br from-emerald-500 to-emerald-600 border-2 border-emerald-300/40 text-white font-semibold text-sm px-5 py-2.5 rounded-lg uppercase tracking-wider shadow-[0_4px_16px_rgba(46,204,113,0.4)] hover:scale-105 transition-transform z-[1000]">
-                  ▶ Play
-                </button>
-              )}
-              {hasStack && G.stack.length > 1 && (
-                <button onClick={playStack}
-                  className="bg-gradient-to-br from-emerald-500 to-emerald-600 border-2 border-emerald-300/40 text-white font-semibold text-sm px-5 py-2.5 rounded-lg uppercase tracking-wider shadow-[0_4px_16px_rgba(46,204,113,0.4)] hover:scale-105 transition-transform z-[1000]">
-                  ▶ Stack
+                  ▶ {G.stack.length > 1 ? 'Stack' : 'Play'}
                 </button>
               )}
             </div>
@@ -320,19 +330,19 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
 
           {/* Penalty */}
           {G.pending > 0 && (
-            <div className="bg-destructive/20 border border-destructive/50 text-red-400 text-sm font-semibold px-3.5 py-1 rounded-full">
+            <div className="bg-destructive/20 border border-destructive/50 text-red-400 text-sm font-semibold px-3.5 py-1 rounded-full animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.2)]">
               ⚠ Draw penalty: {G.pending}
             </div>
           )}
 
           {G.wildSuit && (
-            <div className="text-gold-light text-sm font-medium">
-              Wild Suit: {G.wildSuit.toUpperCase()}
+            <div className="text-gold-light text-[11px] font-bold bg-gold/10 px-4 py-1.5 rounded-full border border-gold/20 uppercase tracking-[2px]">
+              Wild Suit: {G.wildSuit}
             </div>
           )}
         </div>
 
-        {/* Player area */}
+        {/* Player Hand area */}
         <div className="absolute bottom-0 left-0 right-0 h-[175px] flex flex-col items-center justify-end pb-2 z-[15]">
           <div className="text-foreground/70 text-[11px] tracking-[2px] uppercase mb-1.5 flex items-center gap-1.5">
             <span className={`w-2 h-2 rounded-full bg-gold shadow-[0_0_8px_hsl(var(--gold))] ${isPlayerTurn ? 'animate-pulse' : 'opacity-0'}`} />
@@ -342,30 +352,28 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
             {handCards.map(({ card, realIndex }, i) => {
               const angle = aStart + step * i;
               const lift = Math.abs(angle) * 0.4;
-              let ok = false;
-              if (isPlayerTurn) {
-                try { ok = gameManager.isPlayable(card); } catch { ok = false; }
-              }
+              const isActive = isPlayerTurn && gameManager.isPlayable(card);
+
               return (
                 <div key={card.id + '-' + i}
                   onClick={() => isPlayerTurn && playCard(realIndex)}
-                  className={`absolute bottom-0 origin-bottom transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${ok ? 'cursor-pointer hover:brightness-110 hover:drop-shadow-[0_0_8px_hsl(var(--gold)/0.7)]' : 'grayscale-[50%] brightness-[0.65] cursor-not-allowed'}`}
+                  className={`absolute bottom-0 origin-bottom transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${isActive ? 'cursor-pointer hover:brightness-110' : 'grayscale-[50%] brightness-[0.65] cursor-not-allowed'}`}
                   style={{
-                    left: `calc(50% + ${(i - handCards.length / 2) * 50}px)`,
+                    left: `calc(50% + ${(i - (handCards.length - 1) / 2) * 50}px)`,
                     transform: `rotate(${angle}deg) translateY(-${lift}px)`,
-                    zIndex: i + 1,
+                    zIndex: 10 + i,
                   }}
-                  onMouseEnter={e => { if (ok) (e.currentTarget.style.transform = `rotate(${angle}deg) translateY(-${lift + 22}px)`); }}
-                  onMouseLeave={e => { e.currentTarget.style.transform = `rotate(${angle}deg) translateY(-${lift}px)`; }}
+                  onMouseEnter={e => { if (isActive) (e.currentTarget.style.transform = `rotate(${angle}deg) translateY(-${lift + 22}px) scale(1.1)`); }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = `rotate(${angle}deg) translateY(-${lift}px) scale(1)`; }}
                 >
-                  <div className="w-[72px] h-[101px] rounded-[7px] bg-white border-[1.5px] border-gray-300 shadow-lg overflow-hidden">
+                  <div className={`w-[72px] h-[101px] rounded-[7px] bg-white border-[1.5px] border-gray-300 shadow-lg overflow-hidden transition-all ${isActive ? 'ring-2 ring-emerald-400 ring-offset-2 ring-offset-[#0a3a2a]' : ''}`}>
                     <img src={cardUrl(card)} alt={card.id} className="w-full h-full object-contain" />
                   </div>
                 </div>
               );
             })}
-            {showMore && (
-              <div className="absolute bottom-0.5 right-1.5 bg-gold/25 border border-gold/45 text-gold-light text-[10px] px-2 py-0.5 rounded-xl">
+            {player && player.hand.length > MAX_VISIBLE && (
+              <div className="hidden bottom-0.5 right-[calc(50%-220px)] bg-gold/25 border border-gold/45 text-gold-light text-[10px] px-2 py-0.5 rounded-xl font-bold">
                 +{player.hand.length - MAX_VISIBLE} more
               </div>
             )}
@@ -373,14 +381,14 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
         </div>
 
         {/* Hand navigation */}
-        {player && player.hand.length > 5 && (
-          <div className="absolute bottom-5 left-0 right-0 flex justify-between px-[270px] z-[20] pointer-events-none">
+        {player && player.hand.length > 7 && (
+          <div className="absolute bottom-5 left-0 right-0 flex justify-between px-[15%] md:px-[270px] z-[20] pointer-events-none">
             <button onClick={() => rotateHand(-1)}
-              className="pointer-events-auto w-8 h-8 rounded-full bg-gold/20 border border-gold/40 text-gold flex items-center justify-center hover:bg-gold/40 transition-colors">
+              className="pointer-events-auto w-8 h-8 rounded-full bg-gold/20 border border-gold/40 text-gold flex items-center justify-center hover:bg-gold/40 transition-colors shadow-lg">
               ◀
             </button>
             <button onClick={() => rotateHand(1)}
-              className="pointer-events-auto w-8 h-8 rounded-full bg-gold/20 border border-gold/40 text-gold flex items-center justify-center hover:bg-gold/40 transition-colors">
+              className="pointer-events-auto w-8 h-8 rounded-full bg-gold/20 border border-gold/40 text-gold flex items-center justify-center hover:bg-gold/40 transition-colors shadow-lg">
               ▶
             </button>
           </div>
@@ -389,7 +397,7 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
         {/* Last Card button */}
         {canLC && (
           <button onClick={callLastCard}
-            className="absolute bottom-[52px] right-5 bg-gradient-to-br from-game-red to-red-900 border-2 border-red-400/40 text-white font-display text-sm font-bold px-4 py-2 rounded-lg tracking-wider uppercase z-[25] shadow-[0_4px_16px_rgba(204,34,34,0.4)] hover:scale-105 transition-transform">
+            className="absolute bottom-[52px] right-5 bg-gradient-to-br from-game-red to-red-900 border-2 border-red-400/40 text-white font-display text-sm font-bold px-4 py-2 rounded-lg tracking-wider uppercase z-[25] shadow-[0_4px_16px_rgba(204,34,34,0.4)] hover:scale-105 transition-transform animate-bounce">
             Last Card!
           </button>
         )}
@@ -397,10 +405,13 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
 
       {/* Status bar */}
       <div className="bg-black/50 border-t border-gold/20 px-5 py-2 flex items-center gap-3 min-h-[40px] z-[20]">
-        <span className="text-gold-light text-sm font-medium flex-1">{computedStatusMsg}</span>
-        <span className="bg-gold/15 border border-gold/40 text-gold text-[11px] px-2.5 py-0.5 rounded-full tracking-wider">
-          {G.turnIndex === localPlayerId ? 'YOUR TURN' : `${G.players[G.turnIndex]?.name.toUpperCase()}'S TURN`}
-        </span>
+        <span className="text-gold-light text-sm font-medium flex-1 italic">{statusMsg}</span>
+        <div className="flex items-center gap-2">
+          <div className={`w-1.5 h-1.5 rounded-full ${mode === 'multiplayer' ? 'bg-emerald-500' : 'bg-blue-500'} shadow-[0_0_8px_currentColor]`} />
+          <span className="bg-gold/15 border border-gold/40 text-gold text-[11px] px-2.5 py-0.5 rounded-full tracking-wider font-bold">
+            {G.turnIndex === localPlayerIndex ? 'YOUR TURN' : `${G.players[G.turnIndex]?.name.toUpperCase()}'S TURN`}
+          </span>
+        </div>
       </div>
 
       {/* Modal */}
@@ -409,26 +420,60 @@ const LastCardGame = ({ config, onBackToMode }: LastCardGameProps) => {
           <div className="bg-gradient-to-br from-[#1a2a4a] to-[#0d1f3c] border border-gold/50 rounded-2xl p-8 text-center max-w-[380px] w-[90%] shadow-[0_24px_80px_rgba(0,0,0,0.8)]">
             <h2 className="font-display text-gold-light text-2xl mb-3">{modal.title}</h2>
             <p className="text-foreground/75 text-sm mb-6 leading-relaxed whitespace-pre-line">{modal.message}</p>
-            <button onClick={() => {
-              setModal(null);
-              if (modal.title !== '📖 Rules') {
-                if (onBackToMode) {
-                  onBackToMode();
-                } else if (localGame.newGame) {
-                  localGame.newGame();
-                }
-              }
-            }}
-              className="bg-gradient-to-br from-gold to-gold-light text-primary-foreground font-bold text-sm px-6 py-3 rounded-lg tracking-wider uppercase hover:scale-105 transition-transform">
-              {modal.title === '📖 Rules' ? 'Close' : 'Back to Menu'}
-            </button>
+            
+            {modal.title === 'Leave Game?' ? (
+              <div className="flex gap-4 justify-center">
+                <button 
+                  onClick={() => setModal(null)}
+                  className="bg-white/10 text-white font-bold text-sm px-6 py-3 rounded-lg tracking-wider uppercase hover:bg-white/20 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={async () => {
+                    if (mode === 'multiplayer' && leaveGame) {
+                      await leaveGame();
+                    }
+                    setModal(null);
+                    onBackToMode?.();
+                  }}
+                  className="bg-gradient-to-br from-red-500 to-red-600 text-white font-bold text-sm px-6 py-3 rounded-lg tracking-wider uppercase hover:scale-105 transition-transform shadow-[0_0_20px_rgba(239,68,68,0.3)]"
+                >
+                  Leave
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {G.over && G.lastActionMessage?.includes('abandoned') && (
+                  <div className="bg-destructive/10 border border-destructive/30 p-3 rounded-xl">
+                    <p className="text-red-400 font-bold text-xs uppercase tracking-[2px] mb-1">Match Terminated</p>
+                    <p className="text-foreground/80 text-xs italic">"{G.lastActionMessage}"</p>
+                  </div>
+                )}
+                <button 
+                  onClick={() => {
+                    setModal(null);
+                    if (modal.title !== '📖 Rules') {
+                      if (onBackToMode) {
+                        onBackToMode();
+                      } else if (newGame) {
+                        newGame();
+                      }
+                    }
+                  }}
+                  className="bg-gradient-to-br from-gold to-gold-light text-primary-foreground font-bold text-sm px-6 py-3 rounded-lg tracking-wider uppercase hover:scale-105 transition-transform"
+                >
+                  {modal.title === '📖 Rules' ? 'Close' : (mode === 'multiplayer' ? 'Back to Menu' : 'Play Again')}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* Toast */}
       {toastMsg && (
-        <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-background/95 border border-gold/50 text-gold-light font-display text-lg px-7 py-3 rounded-xl z-[300] pointer-events-none text-center animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-background/95 border border-gold/50 text-gold-light font-display text-lg px-7 py-3 rounded-xl z-[300] pointer-events-none text-center animate-in fade-in zoom-in-95 duration-200 shadow-2xl">
           {toastMsg}
         </div>
       )}

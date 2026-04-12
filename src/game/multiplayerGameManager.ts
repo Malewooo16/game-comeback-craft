@@ -142,7 +142,7 @@ export class MultiplayerGameManager {
    * Undo stack card
    */
   undoStackCard(stackIndex: number): GameState {
-    const result = rules.undoStackCard(this.state, stackIndex);
+    const result = rules.undoStackCard(this.state, this.localPlayerId, stackIndex);
     this.state = result.state;
     return this.state;
   }
@@ -244,7 +244,8 @@ export class MultiplayerGameManager {
       }
       case 'undoStack': {
         const payload = event.payload as { stackIndex: number };
-        rules.undoStackCard(this.state, payload.stackIndex);
+        const result = rules.undoStackCard(this.state, event.playerId, payload.stackIndex);
+        this.state = result.state;
         this.emitToast('Card removed from stack');
         break;
       }

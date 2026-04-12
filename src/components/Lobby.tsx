@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Pusher from 'pusher-js';
 import { createLobby, joinLobby, ServerLobby } from '../services/lobbyClient';
 import { useAuth } from '../hooks/useAuth';
 import { getPusherService } from '../services/pusherService';
@@ -176,7 +177,7 @@ export const GameModeSelector: React.FC<GameModeSelectorProps> = ({ onModeSelect
                         style={{ width: `${stats.totalGames > 0 ? (stats.wins / stats.totalGames) * 100 : 0}%` }} 
                       />
                     </div>
-                    <div className="flex justify-between text-[8px] uppercase tracking-tighter font-bold mt-1 text-white/20">
+                    <div className="flex justify-between text-[9px] uppercase font-bold mt-1 text-white/20">
                       <span>Win Rate</span>
                       <span>{stats.totalGames > 0 ? Math.round((stats.wins / stats.totalGames) * 100) : 0}%</span>
                     </div>
@@ -315,41 +316,56 @@ export const LocalLobby: React.FC<LocalLobbyProps> = ({ onGameStart }) => {
 
 export interface MultiplayerLobbyProps {
   joinCode?: string;
+  initialLobby?: ServerLobby | null;
   onGameStart: (gameId: string, playerId: number) => void;
   onBack: () => void;
 }
 
 export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
   joinCode: urlJoinCode,
+  initialLobby = null,
   onGameStart,
   onBack,
 }) => {
-  const [lobby, setLobby] = useState<ServerLobby | null>(null);
+  const [lobby, setLobby] = useState<ServerLobby | null>(initialLobby);
   const [joinCodeInput, setJoinCodeInput] = useState(urlJoinCode || '');
   const [maxPlayers, setMaxPlayers] = useState<2 | 3 | 4>(2);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
-  const pusher = getPusherService();
+  
+  // Directly use pusher-js to ensure real connection
+  const [pusher] = useState(() => new Pusher(import.meta.env.VITE_PUSHER_KEY || 'local-dev', {
+    cluster: import.meta.env.VITE_PUSHER_CLUSTER || 'mt1',
+    forceTLS: true,
+  }));
 
   useEffect(() => {
     if (lobby) {
+      console.log(`[Lobby] Subscribing to lobby-${lobby.id}`);
       const channel = pusher.subscribe(`lobby-${lobby.id}`);
+      
       channel.bind('lobby-update', (updatedLobby: ServerLobby) => {
+        console.log('[Lobby] Received update via Pusher. Status:', updatedLobby.status, 'GameId:', updatedLobby.gameId);
         setLobby(updatedLobby);
-        if (updatedLobby.status === 'active' && updatedLobby.gameId) {
-          const myPlayerId = updatedLobby.players.find(p => p.id === user?.id)?.id;
-          if (myPlayerId !== undefined) {
-            onGameStart(updatedLobby.gameId, myPlayerId);
-          }
-        }
       });
 
       return () => {
+        console.log(`[Lobby] Unsubscribing from lobby-${lobby.id}`);
         pusher.unsubscribe(`lobby-${lobby.id}`);
       };
     }
-  }, [lobby?.id, user?.id, onGameStart, pusher]);
+  }, [lobby?.id, pusher]);
+
+  // Redirect to game when lobby becomes active
+  useEffect(() => {
+    if (lobby?.status === 'active' && lobby?.gameId && user) {
+      const myPlayer = lobby.players.find(p => p.id === user.id);
+      if (myPlayer) {
+        onGameStart(lobby.gameId, myPlayer.id);
+      }
+    }
+  }, [lobby?.status, lobby?.gameId, lobby?.players, user, onGameStart]);
 
   const handleCreateGame = async () => {
     setLoading(true);
@@ -390,6 +406,11 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
       }
       const joinedLobby = await joinLobby(joinCodeInput);
       setLobby(joinedLobby);
+      
+      // If game already started (auto-start), redirect immediately
+      if (joinedLobby.status === 'active' && joinedLobby.gameId && user) {
+        onGameStart(joinedLobby.gameId, user.id);
+      }
     } catch (err) {
       console.error('Join lobby error:', err);
       // Check for 401 specifically
@@ -568,26 +589,26 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
   const shareLink = `${window.location.origin}/join/${lobby.joinCode}`;
 
   return (
-    <div className="w-screen h-screen flex flex-col items-center justify-center bg-[#0a0f1a] overflow-hidden text-white font-sans">
+    <div className="w-screen min-h-screen flex flex-col items-center justify-center bg-[#0a0f1a] overflow-y-auto py-12 px-4 text-white font-sans">
       <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-20">
         <div className="absolute top-[-10%] left-[-5%] w-[40%] h-[40%] bg-gold/10 rounded-full blur-[120px] animate-pulse" />
       </div>
 
-      <div className="w-full max-w-md bg-white/5 border border-white/10 rounded-[40px] p-10 backdrop-blur-xl shadow-2xl relative animate-in fade-in zoom-in-95 duration-700">
+      <div className="w-full max-w-md bg-white/5 border border-white/10 rounded-[40px] p-6 md:p-8 backdrop-blur-xl shadow-2xl relative animate-in fade-in zoom-in-95 duration-700">
         <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex flex-col items-center">
           <div className="bg-gold text-[#0a0f1a] px-5 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[3px] shadow-xl">Room Active</div>
           <h2 className="text-4xl text-white font-mono mt-4 tracking-[0.4em] drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]">{lobby.joinCode}</h2>
         </div>
 
-        <div className="mt-12 mb-10">
-          <div className="flex justify-between items-end mb-6">
+        <div className="mt-10 mb-6">
+          <div className="flex justify-between items-end mb-4">
             <h3 className="text-white font-display text-2xl">Crew</h3>
             <span className="text-white/20 text-xs font-mono font-bold">{lobby.players.length} / {lobby.maxPlayers}</span>
           </div>
           
-          <div className="space-y-4">
+          <div className="space-y-3 max-h-[30vh] overflow-y-auto pr-2 custom-scrollbar">
             {lobby.players.map(player => (
-              <div key={player.id} className="flex items-center gap-4 bg-white/5 p-4 rounded-2xl border border-white/5 group transition-all hover:bg-white/10">
+              <div key={player.id} className="flex items-center gap-4 bg-white/5 p-3 rounded-2xl border border-white/5 group transition-all hover:bg-white/10">
                 <div className={`w-3 h-3 rounded-full ${player.isReady ? 'bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.6)]' : 'bg-white/10 animate-pulse'}`} />
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
@@ -606,8 +627,8 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
             ))}
             
             {/* Empty slots */}
-            {Array.from({ length: lobby.maxPlayers - lobby.players.length }).map((_, i) => (
-              <div key={i} className="flex items-center gap-4 bg-black/20 p-4 rounded-2xl border border-white/5 border-dashed opacity-40">
+            {Array.from({ length: Math.max(0, lobby.maxPlayers - lobby.players.length) }).map((_, i) => (
+              <div key={i} className="flex items-center gap-4 bg-black/20 p-3 rounded-2xl border border-white/5 border-dashed opacity-40">
                 <div className="w-3 h-3 rounded-full bg-white/5" />
                 <span className="flex-1 text-[10px] text-white/20 font-bold uppercase tracking-widest italic">Requesting entry...</span>
               </div>
@@ -616,7 +637,7 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
         </div>
 
         {/* Share Link */}
-        <div className="mb-10 p-5 rounded-3xl bg-black/40 border border-white/5">
+        <div className="mb-6 p-4 rounded-3xl bg-black/40 border border-white/5">
           <p className="text-white/20 text-[8px] font-black uppercase tracking-[3px] mb-3">Invite Channel</p>
           <div className="flex gap-2">
             <input
@@ -624,14 +645,13 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
               type="text"
               value={shareLink}
               readOnly
-              className="flex-1 px-4 py-3 text-[10px] rounded-xl bg-white/5 border border-white/10 text-white/40 outline-none font-mono"
+              className="flex-1 px-4 py-2.5 text-[10px] rounded-xl bg-white/5 border border-white/10 text-white/40 outline-none font-mono"
             />
             <button
               onClick={() => {
                 navigator.clipboard.writeText(shareLink);
-                // In a real app, I'd trigger a toast here
               }}
-              className="px-5 py-3 rounded-xl bg-gold/20 hover:bg-gold/30 text-gold text-[10px] font-black uppercase tracking-widest transition-all"
+              className="px-4 py-2.5 rounded-xl bg-gold/20 hover:bg-gold/30 text-gold text-[10px] font-black uppercase tracking-widest transition-all"
             >
               Copy
             </button>
@@ -639,13 +659,13 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
         </div>
 
         {/* Actions */}
-        <div className="space-y-4">
+        <div className="space-y-3">
           <button
             onClick={handleToggleReady}
-            className={`w-full py-5 rounded-2xl font-display text-lg tracking-widest uppercase transition-all shadow-xl ${
+            className={`w-full py-4 rounded-2xl font-display text-lg tracking-widest uppercase transition-all shadow-xl ${
               myPlayer?.isReady 
                 ? 'bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20' 
-                : 'bg-emerald-500 text-[#0a0f1a] shadow-[0_0_30px_rgba(16,185,129,0.3)] hover:scale-[1.02] active:scale-95'
+                : 'bg-emerald-500 text-[#0a0f1a] shadow-[0_0_30px_rgba(16,185,129,0.3)] hover:scale-[1.01] active:scale-95'
             }`}
           >
             {myPlayer?.isReady ? 'Stand Down' : 'Ready Up'}
@@ -655,7 +675,7 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
             <button
               onClick={handleStartGame}
               disabled={!canStart || loading}
-              className="w-full bg-gold text-[#0a0f1a] disabled:opacity-20 disabled:grayscale font-display text-lg py-5 rounded-2xl shadow-[0_0_30px_rgba(255,215,0,0.2)] uppercase tracking-widest hover:scale-[1.02] transition-all active:scale-95"
+              className="w-full bg-gold text-[#0a0f1a] disabled:opacity-20 disabled:grayscale font-display text-lg py-4 rounded-2xl shadow-[0_0_30px_rgba(255,215,0,0.2)] uppercase tracking-widest hover:scale-[1.01] transition-all active:scale-95"
             >
               {loading ? <Loader2 className="animate-spin mx-auto" /> : 'Launch Match'}
             </button>
@@ -677,11 +697,13 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
                   localStorage.removeItem('token');
                 }
                 setLobby(null);
+                onBack(); // Go back to main hub
               } catch (err) {
                 setLobby(null);
+                onBack(); // Go back to main hub even on error
               }
             }}
-            className="w-full text-white/20 hover:text-white/40 text-[9px] font-black uppercase tracking-[4px] pt-4 transition-colors"
+            className="w-full text-white/20 hover:text-white/40 text-[9px] font-black uppercase tracking-[4px] pt-2 transition-colors"
           >
             Abandon Room
           </button>
