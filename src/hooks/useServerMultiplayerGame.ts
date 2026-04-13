@@ -3,6 +3,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { getServerClient } from '../services/serverClient';
 import { GameState, Card, Player } from '../game/gameState';
 import * as rules from '../game/gameRules';
+import { ServerMessage } from '@/types/server';
 
 export interface ServerMultiplayerGameConfig {
   gameId: string;
@@ -18,6 +19,9 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
   const [statusMsg, setStatusMsg] = useState('Connecting to server...');
   const [modal, setModal] = useState<{ title: string; message: string } | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [isPendingMove, setIsPendingMove] = useState(false);
+  const [rematchStatus, setRematchStatus] = useState<'idle' | 'requesting' | 'waiting' | 'offer' | 'declined'>('idle');
+  const [pendingRematchOpponent, setPendingRematchOpponent] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
   const moveSequence = useRef(0);
 
@@ -45,6 +49,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
         const unsubscribeState = client.on('game-state', (updatedState: GameState) => {
           console.log('State update from Pusher');
           setState(updatedState);
+          setIsPendingMove(false);
           
           if (updatedState.lastActionMessage) {
             setToastMsg(updatedState.lastActionMessage);
@@ -81,10 +86,14 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
         });
 
         // Listen for invalid moves
-        const unsubscribeInvalid = client.on('invalid-move', (error: string) => {
-          setToastMsg(error);
-          clearTimeout(toastTimer.current);
-          toastTimer.current = setTimeout(() => setToastMsg(null), 1900);
+        const unsubscribeInvalid = client.on('invalid-move', (message: ServerMessage) => {
+          // Only show toast if the invalid move was made by the local player
+          if (message.playerId === config.localPlayerId) {
+            setToastMsg(message.error || 'Invalid move');
+            setIsPendingMove(false);
+            clearTimeout(toastTimer.current);
+            toastTimer.current = setTimeout(() => setToastMsg(null), 1900);
+          }
         });
 
         // Listen for player joined
@@ -94,11 +103,74 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
           toastTimer.current = setTimeout(() => setToastMsg(null), 1900);
         });
 
+        // Listen for rematch request (ignore if from self)
+        const unsubscribeRematchRequest = client.on('rematch-request', (data: { requesterId: number; requesterName: string }) => {
+          // Ignore if the request is from ourselves
+          if (data.requesterId === config.localPlayerId) {
+            console.log('[useServerMultiplayerGame] Ignoring own rematch request');
+            return;
+          }
+          console.log('[useServerMultiplayerGame] Rematch request from:', data.requesterName);
+          setPendingRematchOpponent(data.requesterName);
+          setRematchStatus('offer');
+          setModal({
+            title: 'Rematch Request',
+            message: `${data.requesterName} wants a rematch! Do you accept?`,
+          });
+        });
+
+        // Listen for rematch response (ignore if from self)
+        const unsubscribeRematchResponse = client.on('rematch-response', async (data: { accepted: boolean; responderId: number; newGameId?: string }) => {
+          // Ignore if the response is from ourselves
+          if (data.responderId === config.localPlayerId) {
+            console.log('[useServerMultiplayerGame] Ignoring own rematch response');
+            return;
+          }
+          console.log('[useServerMultiplayerGame] Rematch response:', data);
+          if (data.accepted && data.newGameId) {
+            // Rematch accepted - disconnect from old game first, then navigate
+            setRematchStatus('idle');
+            setModal(null);
+            try {
+              await clientRef.current.disconnect();
+            } catch (e) {
+              console.log('[useServerMultiplayerGame] Disconnect error (ignoring):', e);
+            }
+            // Navigate with rematch flag to show syncing view
+            setTimeout(() => {
+              window.location.href = `/?gameId=${data.newGameId}&playerId=${config.localPlayerId}&rematch=true`;
+            }, 100);
+          } else {
+            // Rematch declined - navigate to main menu
+            setRematchStatus('idle');
+            setModal(null);
+            window.location.href = '/';
+          }
+        });
+
+        // Listen for rematch cancelled (ignore if from self)
+        const unsubscribeRematchCancelled = client.on('rematch-cancelled', (data: { playerId: number; playerName: string }) => {
+          // Ignore if the cancellation is from ourselves
+          if (data.playerId === config.localPlayerId) {
+            console.log('[useServerMultiplayerGame] Ignoring own rematch cancellation');
+            return;
+          }
+          console.log('[useServerMultiplayerGame] Rematch cancelled by:', data.playerName);
+          setRematchStatus('idle');
+          setPendingRematchOpponent(null);
+          setToastMsg(`${data.playerName} cancelled the rematch request`);
+          clearTimeout(toastTimer.current);
+          toastTimer.current = setTimeout(() => setToastMsg(null), 2000);
+        });
+
         // Cleanup
         return () => {
           unsubscribeState();
           unsubscribeInvalid();
           unsubscribeJoined();
+          unsubscribeRematchRequest();
+          unsubscribeRematchResponse();
+          unsubscribeRematchCancelled();
         };
       } catch (error) {
         console.error('Failed to connect:', error);
@@ -119,6 +191,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
       if (!state) return;
 
       try {
+        setIsPendingMove(true);
         // Optimistically update local state for immediate feedback
         setState(prevState => {
           if (!prevState) return prevState;
@@ -126,6 +199,13 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
           if (!player || cardIndex < 0 || cardIndex >= player.hand.length) return prevState;
           
           const card = player.hand[cardIndex];
+          
+          // Verify playability before optimistic update
+          if (!rules.isPlayable(prevState, card)) {
+            console.warn('Optimistic update blocked: card not playable');
+            return prevState;
+          }
+          
           const newState = { ...prevState, players: prevState.players.map(p => ({ ...p })) };
           const localPlayer = newState.players.find(p => p.id === config.localPlayerId)!;
           
@@ -172,6 +252,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
 
         await clientRef.current.sendMove(move);
       } catch (error) {
+        setIsPendingMove(false);
         console.error('Failed to send move:', error);
         const errorMsg = error instanceof Error ? error.message : 'Failed to send move';
         setToastMsg(errorMsg);
@@ -186,6 +267,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     if (!state) return;
 
     try {
+      setIsPendingMove(true);
       const move = {
         gameId: config.gameId,
         playerId: config.localPlayerId,
@@ -197,6 +279,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
 
       await clientRef.current.sendMove(move);
     } catch (error) {
+      setIsPendingMove(false);
       console.error('Failed to send move:', error);
       const errorMsg = error instanceof Error ? error.message : 'Failed to send move';
       setToastMsg(errorMsg);
@@ -207,6 +290,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     if (!state) return;
 
     try {
+      setIsPendingMove(true);
       // Optimistically update local state
       setState(prevState => {
         if (!prevState || stackIndex < 0 || stackIndex >= prevState.stack.length) return prevState;
@@ -230,6 +314,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
 
       await clientRef.current.sendMove(move);
     } catch (error) {
+      setIsPendingMove(false);
       console.error('Failed to send move:', error);
       const errorMsg = error instanceof Error ? error.message : 'Failed to send move';
       setToastMsg(errorMsg);
@@ -240,6 +325,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     if (!state) return;
 
     try {
+      setIsPendingMove(true);
       const move = {
         gameId: config.gameId,
         playerId: config.localPlayerId,
@@ -251,6 +337,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
 
       await clientRef.current.sendMove(move);
     } catch (error) {
+      setIsPendingMove(false);
       console.error('Failed to send move:', error);
       const errorMsg = error instanceof Error ? error.message : 'Failed to send move';
       setToastMsg(errorMsg);
@@ -261,6 +348,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     if (!state) return;
 
     try {
+      setIsPendingMove(true);
       const move = {
         gameId: config.gameId,
         playerId: config.localPlayerId,
@@ -272,6 +360,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
 
       await clientRef.current.sendMove(move);
     } catch (error) {
+      setIsPendingMove(false);
       console.error('Failed to send move:', error);
       const errorMsg = error instanceof Error ? error.message : 'Failed to send move';
       setToastMsg(errorMsg);
@@ -332,6 +421,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ playerId: config.localPlayerId }),
+        credentials: 'include',
       });
       
       console.log('[useServerMultiplayerGame] leaveGame response:', response.status);
@@ -344,6 +434,86 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     }
   }, [config.gameId, config.localPlayerId]);
 
+  const requestRematch = useCallback(async () => {
+    if (rematchStatus !== 'idle') return;
+    
+    setRematchStatus('requesting');
+    setModal({
+      title: 'Rematch Requested',
+      message: 'Waiting for opponent...',
+    });
+    
+    try {
+      await clientRef.current.requestRematch();
+      setRematchStatus('waiting');
+    } catch (error) {
+      console.error('[useServerMultiplayerGame] Failed to request rematch:', error);
+      setRematchStatus('idle');
+      setModal(null);
+      setToastMsg('Failed to send rematch request');
+      clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => setToastMsg(null), 2000);
+    }
+  }, [rematchStatus]);
+
+  const pendingRematchGameId = useRef<string | null>(null);
+
+  const acceptRematch = useCallback(async () => {
+    try {
+      // Show loading immediately before server response
+      setModal({
+        title: 'Starting Rematch...',
+        message: 'Connecting to new game...',
+      });
+      // Send accept request - server returns new game ID in response payload
+      const response = await clientRef.current.respondRematch(true);
+      if (response?.newGameId) {
+        pendingRematchGameId.current = response.newGameId;
+        // Direct navigate with the game ID
+        setTimeout(() => {
+          window.location.href = `/?gameId=${response.newGameId}&playerId=${config.localPlayerId}&rematch=true`;
+        }, 500);
+      } else {
+        // Fallback: navigate to main which checks active sessions
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 1500);
+      }
+    } catch (error) {
+      console.error('[useServerMultiplayerGame] Failed to accept rematch:', error);
+      setModal(null);
+      setToastMsg('Failed to accept rematch');
+      clearTimeout(toastTimer.current);
+      toastTimer.current = setTimeout(() => setToastMsg(null), 2000);
+    }
+  }, [config.localPlayerId]);
+
+  const declineRematch = useCallback(async () => {
+    try {
+      await clientRef.current.respondRematch(false);
+      setModal(null);
+      setRematchStatus('idle');
+      setPendingRematchOpponent(null);
+    } catch (error) {
+      console.error('[useServerMultiplayerGame] Failed to decline rematch:', error);
+    }
+  }, []);
+
+  const cancelRematch = useCallback(async () => {
+    if (rematchStatus !== 'waiting' && rematchStatus !== 'requesting') return;
+    
+    try {
+      await clientRef.current.cancelRematch();
+    } catch (error) {
+      console.error('[useServerMultiplayerGame] Failed to cancel rematch:', error);
+    }
+    
+    setRematchStatus('idle');
+    setModal(null);
+  }, [rematchStatus]);
+
+  const is1v1 = state && state.players && state.players.length === 2;
+
   return {
     state,
     toastMsg,
@@ -351,6 +521,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     modal,
     setModal,
     isConnected,
+    isPending: isPendingMove,
     playCard,
     playStack,
     undoStackCard,
@@ -361,5 +532,12 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     isPlayable,
     syncRequest,
     leaveGame,
+    is1v1,
+    rematchStatus,
+    pendingRematchOpponent,
+    requestRematch,
+    acceptRematch,
+    declineRematch,
+    cancelRematch,
   };
 }

@@ -13,7 +13,7 @@ interface AuthContextType {
   loading: boolean;
   login: (token: string, user: User) => void;
   logout: () => void;
-  refreshToken: () => Promise<boolean>;
+  refreshAccessToken: () => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,33 +23,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [loading, setLoading] = useState(true);
 
-  const refreshToken = async () => {
-    if (!token) return false;
+  const refreshAccessToken = async () => {
     try {
       const response = await fetch(`${import.meta.env.VITE_SERVER_URL || 'http://localhost:3001'}/auth/refresh`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
         },
+        // Cookies are sent automatically with this
+        credentials: 'include',
       });
 
       if (response.ok) {
         const data = await response.json();
         localStorage.setItem('token', data.token);
         setToken(data.token);
-        setUser(data.user);
+        if (data.user) setUser(data.user);
         return true;
+      } else {
+        // Refresh token might be expired or missing
+        clearAuth();
+        return false;
       }
     } catch (err) {
       console.error('Token refresh failed:', err);
+      return false;
     }
-    return false;
+  };
+
+  const clearAuth = () => {
+    localStorage.removeItem('token');
+    setToken(null);
+    setUser(null);
   };
 
   useEffect(() => {
     const fetchUser = async () => {
+      // If we have no token, try to refresh immediately (we might have a cookie)
       if (!token) {
-        setLoading(false);
+        const refreshed = await refreshAccessToken();
+        if (!refreshed) {
+          setLoading(false);
+        }
+        // If refreshed, the next effect run will handle fetchUser with the new token
         return;
       }
 
@@ -58,23 +74,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           headers: {
             Authorization: `Bearer ${token}`,
           },
+          credentials: 'include',
         });
 
         if (response.ok) {
           const data = await response.json();
           setUser(data.user);
         } else if (response.status === 401) {
-          // Token might be expired, try refreshing
-          const success = await refreshToken();
-          if (!success) {
-            localStorage.removeItem('token');
-            setToken(null);
-            setUser(null);
-          }
+          const success = await refreshAccessToken();
+          if (!success) clearAuth();
         } else {
-          localStorage.removeItem('token');
-          setToken(null);
-          setUser(null);
+          clearAuth();
         }
       } catch (err) {
         console.error('Auth check failed:', err);
@@ -91,7 +101,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!token) return;
     
     const interval = setInterval(() => {
-      refreshToken();
+      refreshAccessToken();
     }, 10 * 60 * 1000);
     
     return () => clearInterval(interval);
@@ -103,14 +113,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(newUser);
   };
 
-  const logout = () => {
-    localStorage.removeItem('token');
-    setToken(null);
-    setUser(null);
+  const logout = async () => {
+    try {
+      await fetch(`${import.meta.env.VITE_SERVER_URL || 'http://localhost:3001'}/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+    } catch (e) {
+      console.warn('Logout notification failed', e);
+    }
+    clearAuth();
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      token, 
+      loading, 
+      login, 
+      logout,
+      refreshAccessToken 
+    }}>
       {children}
     </AuthContext.Provider>
   );

@@ -61,6 +61,13 @@ const MultiplayerGameView = ({ config, onBackToMode }: { config: { gameId: strin
       onBackToMode={onBackToMode}
       localPlayerIndex={multiGame.state.players.findIndex(p => p.id === config.playerId)}
       mode="multiplayer"
+      is1v1={multiGame.is1v1}
+      rematchStatus={multiGame.rematchStatus}
+      isPending={multiGame.isPending}
+      requestRematch={multiGame.requestRematch}
+      acceptRematch={multiGame.acceptRematch}
+      declineRematch={multiGame.declineRematch}
+      cancelRematch={multiGame.cancelRematch}
     />
   );
 };
@@ -124,17 +131,30 @@ interface GameUIProps {
   onBackToMode?: () => void;
   localPlayerIndex: number;
   mode: 'local' | 'multiplayer';
+  // Rematch props (multiplayer only)
+  is1v1?: boolean;
+  rematchStatus?: 'idle' | 'requesting' | 'waiting' | 'offer' | 'declined';
+  isPending?: boolean;
+  requestRematch?: () => void;
+  acceptRematch?: () => void;
+  declineRematch?: () => void;
+  cancelRematch?: () => void;
 }
 
 const GameUI = ({
   G, gameManager, toastMsg, statusMsg, modal, setModal, 
   playCard, playStack, undoStackCard, drawCard, callLastCard, rotateHand,
-  leaveGame, newGame, onBackToMode, localPlayerIndex, mode
+  leaveGame, newGame, onBackToMode, localPlayerIndex, mode,
+  is1v1, rematchStatus, isPending, requestRematch, acceptRematch, declineRematch, cancelRematch
 }: GameUIProps) => {
   const player = localPlayerIndex !== -1 ? G.players[localPlayerIndex] : null;
   const topCard = G.discard[G.discard.length - 1];
   const isEliminated = player?.isEliminated;
-  const isPlayerTurn = G.turnIndex === localPlayerIndex && !G.over && !isEliminated;
+  
+  // Logical turn state (for rendering visibility/highlights)
+  const isMyTurn = G.turnIndex === localPlayerIndex && !G.over && !isEliminated;
+  // Interaction state (for blocking clicks during network sync)
+  const isInteractionEnabled = isMyTurn && !isPending;
   
   const canLC = player && 
                 gameManager.canCallLastCard(player) && 
@@ -252,8 +272,8 @@ const GameUI = ({
           <div className="flex gap-8 items-center">
             {/* Draw pile */}
             <div className="text-center">
-              <div className="relative cursor-pointer group" onClick={isPlayerTurn ? drawCard : undefined}
-                style={{ opacity: isPlayerTurn ? 1 : 0.5 }}>
+              <div className="relative cursor-pointer group" onClick={isInteractionEnabled ? drawCard : undefined}
+                style={{ opacity: isInteractionEnabled ? 1 : 0.5 }}>
                 <div className="w-[72px] h-[101px] rounded-[7px] border-2 border-gold/50 flex items-center justify-center transition-transform group-hover:-translate-y-1"
                   style={{
                     background: 'linear-gradient(135deg, #1a237e 0%, #283593 50%, #1a237e 100%)',
@@ -295,10 +315,10 @@ const GameUI = ({
           {/* Stack area */}
           <div className="flex items-center gap-4 min-h-[110px]">
             <div className="relative flex items-center justify-center min-w-[180px] min-h-[110px]">
-              {isPlayerTurn && G.stack?.map((c: Card, i: number) => (
-                <div key={i}
-                  onClick={() => isPlayerTurn && undoStackCard(i)}
-                  className={`absolute transition-all duration-300 ${isPlayerTurn ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'} ${i === G.stack.length - 1 ? 'drop-shadow-[0_0_12px_hsl(var(--gold)/0.9)] z-[100]' : ''}`}
+              {isMyTurn && G.stack?.map((c: Card, i: number) => (
+                <div key={c.id}
+                  onClick={() => isInteractionEnabled && undoStackCard(i)}
+                  className={`absolute transition-all duration-300 ${isInteractionEnabled ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'} ${i === G.stack.length - 1 ? 'drop-shadow-[0_0_12px_hsl(var(--gold)/0.9)] z-[100]' : ''}`}
                   style={{ 
                     transform: `translateX(${(i - (G.stack.length - 1) / 2) * 30}px) rotate(${(i - (G.stack.length - 1) / 2) * 8}deg)` 
                   }}>
@@ -312,16 +332,18 @@ const GameUI = ({
                   )}
                 </div>
               ))}
-              {isPlayerTurn && G.stack?.length > 0 && (
+              {isMyTurn && G.stack?.length > 0 && (
                 <div className="absolute -top-2.5 -right-2.5 bg-gradient-to-br from-destructive to-red-800 text-white text-[11px] font-bold w-6 h-6 rounded-full flex items-center justify-center z-[200] shadow-lg">
                   {G.stack.length}
                 </div>
               )}
             </div>
             <div className="flex gap-2">
-              {isPlayerTurn && G.stack?.length >= 1 && (
-                <button onClick={playStack}
-                  className="bg-gradient-to-br from-emerald-500 to-emerald-600 border-2 border-emerald-300/40 text-white font-semibold text-sm px-5 py-2.5 rounded-lg uppercase tracking-wider shadow-[0_4px_16px_rgba(46,204,113,0.4)] hover:scale-105 transition-transform z-[1000]">
+              {isMyTurn && G.stack?.length >= 1 && (
+                <button 
+                  onClick={playStack}
+                  disabled={isPending}
+                  className={`bg-gradient-to-br from-emerald-500 to-emerald-600 border-2 border-emerald-300/40 text-white font-semibold text-sm px-5 py-2.5 rounded-lg uppercase tracking-wider shadow-[0_4px_16px_rgba(46,204,113,0.4)] hover:scale-105 transition-transform z-[1000] ${isPending ? 'opacity-50 cursor-not-allowed' : ''}`}>
                   ▶ {G.stack.length > 1 ? 'Stack' : 'Play'}
                 </button>
               )}
@@ -335,35 +357,35 @@ const GameUI = ({
             </div>
           )}
 
-          {G.wildSuit && (
+          {/* {G.wildSuit && (
             <div className="text-gold-light text-[11px] font-bold bg-gold/10 px-4 py-1.5 rounded-full border border-gold/20 uppercase tracking-[2px]">
               Wild Suit: {G.wildSuit}
             </div>
-          )}
+          )} */}
         </div>
 
         {/* Player Hand area */}
         <div className="absolute bottom-0 left-0 right-0 h-[175px] flex flex-col items-center justify-end pb-2 z-[15]">
           <div className="text-foreground/70 text-[11px] tracking-[2px] uppercase mb-1.5 flex items-center gap-1.5">
-            <span className={`w-2 h-2 rounded-full bg-gold shadow-[0_0_8px_hsl(var(--gold))] ${isPlayerTurn ? 'animate-pulse' : 'opacity-0'}`} />
+            <span className={`w-2 h-2 rounded-full bg-gold shadow-[0_0_8px_hsl(var(--gold))] ${isMyTurn ? 'animate-pulse' : 'opacity-0'}`} />
             <span>Your Hand</span>
           </div>
           <div className="relative w-full h-[130px] flex items-end justify-center">
             {handCards.map(({ card, realIndex }, i) => {
               const angle = aStart + step * i;
               const lift = Math.abs(angle) * 0.4;
-              const isActive = isPlayerTurn && gameManager.isPlayable(card);
+              const isActive = isMyTurn && gameManager.isPlayable(card);
 
               return (
-                <div key={card.id + '-' + i}
-                  onClick={() => isPlayerTurn && playCard(realIndex)}
-                  className={`absolute bottom-0 origin-bottom transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${isActive ? 'cursor-pointer hover:brightness-110' : 'grayscale-[50%] brightness-[0.65] cursor-not-allowed'}`}
+                <div key={card.id}
+                  onClick={() => isInteractionEnabled && playCard(realIndex)}
+                  className={`absolute bottom-0 origin-bottom transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${isActive ? (isInteractionEnabled ? 'cursor-pointer hover:brightness-110' : 'cursor-wait') : 'grayscale-[50%] brightness-[0.65] cursor-not-allowed'}`}
                   style={{
                     left: `calc(50% + ${(i - (handCards.length - 1) / 2) * 50}px)`,
                     transform: `rotate(${angle}deg) translateY(-${lift}px)`,
                     zIndex: 10 + i,
                   }}
-                  onMouseEnter={e => { if (isActive) (e.currentTarget.style.transform = `rotate(${angle}deg) translateY(-${lift + 22}px) scale(1.1)`); }}
+                  onMouseEnter={e => { if (isActive && isInteractionEnabled) (e.currentTarget.style.transform = `rotate(${angle}deg) translateY(-${lift + 22}px) scale(1.1)`); }}
                   onMouseLeave={e => { e.currentTarget.style.transform = `rotate(${angle}deg) translateY(-${lift}px) scale(1)`; }}
                 >
                   <div className={`w-[72px] h-[101px] rounded-[7px] bg-white border-[1.5px] border-gray-300 shadow-lg overflow-hidden transition-all ${isActive ? 'ring-2 ring-emerald-400 ring-offset-2 ring-offset-[#0a3a2a]' : ''}`}>
@@ -421,7 +443,38 @@ const GameUI = ({
             <h2 className="font-display text-gold-light text-2xl mb-3">{modal.title}</h2>
             <p className="text-foreground/75 text-sm mb-6 leading-relaxed whitespace-pre-line">{modal.message}</p>
             
-            {modal.title === 'Leave Game?' ? (
+            {/* Rematch Offer (Accept/Decline) */}
+            {modal.title === 'Rematch Request' ? (
+              <div className="flex gap-4 justify-center">
+                <button 
+                  onClick={() => {
+                    declineRematch?.();
+                  }}
+                  className="bg-white/10 text-white font-bold text-sm px-6 py-3 rounded-lg tracking-wider uppercase hover:bg-white/20 transition-colors"
+                >
+                  Decline
+                </button>
+                <button 
+                  onClick={() => {
+                    acceptRematch?.();
+                  }}
+                  className="bg-gradient-to-br from-emerald-500 to-emerald-600 text-white font-bold text-sm px-6 py-3 rounded-lg tracking-wider uppercase hover:scale-105 transition-transform shadow-[0_0_20px_rgba(46,204,113,0.3)]"
+                >
+                  Accept
+                </button>
+              </div>
+            ) : modal.title === 'Rematch Requested' ? (
+              /* Waiting for opponent */
+              <button 
+                onClick={() => {
+                  cancelRematch?.();
+                }}
+                className="bg-white/10 text-white font-bold text-sm px-6 py-3 rounded-lg tracking-wider uppercase hover:bg-white/20 transition-colors"
+              >
+                Cancel
+              </button>
+            ) : modal.title === 'Leave Game?' ? (
+              /* Leave Game */
               <div className="flex gap-4 justify-center">
                 <button 
                   onClick={() => setModal(null)}
@@ -443,6 +496,7 @@ const GameUI = ({
                 </button>
               </div>
             ) : (
+              /* Endgame or Rules modal */
               <div className="flex flex-col gap-4">
                 {G.over && G.lastActionMessage?.includes('abandoned') && (
                   <div className="bg-destructive/10 border border-destructive/30 p-3 rounded-xl">
@@ -450,6 +504,17 @@ const GameUI = ({
                     <p className="text-foreground/80 text-xs italic">"{G.lastActionMessage}"</p>
                   </div>
                 )}
+                
+                {/* Show Rematch button only for 1v1 multiplayer game that's over and not already waiting */}
+                {mode === 'multiplayer' && is1v1 && G.over && modal.title !== '📖 Rules' && rematchStatus === 'idle' && (
+                  <button 
+                    onClick={() => requestRematch?.()}
+                    className="bg-gradient-to-br from-emerald-500 to-emerald-600 text-white font-bold text-sm px-6 py-3 rounded-lg tracking-wider uppercase hover:scale-105 transition-transform shadow-[0_0_20px_rgba(46,204,113,0.3)]"
+                  >
+                    🔄 Rematch
+                  </button>
+                )}
+                
                 <button 
                   onClick={() => {
                     setModal(null);

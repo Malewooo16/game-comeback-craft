@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import LastCardGame from '../components/LastCardGame';
 import { GameModeSelector, LocalLobby, MultiplayerLobby } from '../components/Lobby';
 import { Leaderboard } from '../components/Leaderboard';
@@ -7,6 +7,7 @@ import { useAuth } from '../hooks/useAuth';
 import { Loader2 } from 'lucide-react';
 
 type GamePage = 'modeSelect' | 'localLobby' | 'multiplayerLobby' | 'game' | 'leaderboard';
+
 
 interface GameStartConfig {
   mode: 'local' | 'multiplayer';
@@ -18,11 +19,42 @@ interface GameStartConfig {
 const Index = () => {
   const { code } = useParams<{ code?: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, loading } = useAuth();
   const [currentPage, setCurrentPage] = useState<GamePage>('modeSelect');
   const [gameConfig, setGameConfig] = useState<GameStartConfig | null>(null);
   const [initialLobby, setInitialLobby] = useState<any>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // Handle game start from URL params (for rematch)
+  useEffect(() => {
+    const gameId = searchParams.get('gameId');
+    const playerId = searchParams.get('playerId');
+    const isRematch = searchParams.get('rematch');
+    if (gameId && playerId) {
+      console.log('[Index] Starting rematch game:', gameId, 'playerId:', playerId);
+      // Show syncing view briefly for rematch to give time for server connection
+      if (isRematch) {
+        setIsSyncing(true);
+        setTimeout(() => {
+          setGameConfig({ 
+            mode: 'multiplayer', 
+            gameId, 
+            playerId: parseInt(playerId, 10) 
+          });
+          setCurrentPage('game');
+          setIsSyncing(false);
+        }, 1500);
+      } else {
+        setGameConfig({ 
+          mode: 'multiplayer', 
+          gameId, 
+          playerId: parseInt(playerId, 10) 
+        });
+        setCurrentPage('game');
+      }
+    }
+  }, [searchParams, navigate]);
 
   // Handle join link and auto-restore active session
   useEffect(() => {

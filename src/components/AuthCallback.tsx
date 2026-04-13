@@ -17,6 +17,7 @@ export const AuthCallback: React.FC = () => {
             headers: {
               Authorization: `Bearer ${token}`,
             },
+            credentials: 'include',
           });
 
           if (response.ok) {

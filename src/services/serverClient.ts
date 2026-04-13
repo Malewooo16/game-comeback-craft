@@ -70,12 +70,27 @@ export class ServerClient {
 
         this.channel.bind('invalid-move', (message: ServerMessage) => {
           console.log('[ServerClient] Invalid move:', message.error);
-          this.emit('invalid-move', message.error);
+          this.emit('invalid-move', message);
         });
 
         this.channel.bind('player-joined', (message: ServerMessage) => {
           console.log('[ServerClient] Player joined');
           this.emit('player-joined', message.data);
+        });
+
+        this.channel.bind('rematch-request', (message: ServerMessage) => {
+          console.log('[ServerClient] Rematch request received');
+          this.emit('rematch-request', message.data);
+        });
+
+        this.channel.bind('rematch-response', (message: ServerMessage) => {
+          console.log('[ServerClient] Rematch response received');
+          this.emit('rematch-response', message.data);
+        });
+
+        this.channel.bind('rematch-cancelled', (message: ServerMessage) => {
+          console.log('[ServerClient] Rematch cancelled received');
+          this.emit('rematch-cancelled', message.data);
         });
 
         this.channel.bind('pusher:subscription_succeeded', () => {
@@ -271,6 +286,72 @@ export class ServerClient {
    */
   isConnected(): boolean {
     return this.pusher !== null && this.channel !== null;
+  }
+
+  /**
+   * Request a rematch
+   */
+  async requestRematch(): Promise<{ success: boolean; message?: string }> {
+    if (!this.gameId || !this.playerId) {
+      throw new Error('Not connected to game');
+    }
+
+    const response = await fetch(`${this.config.serverUrl}/api/games/${this.gameId}/rematch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId: this.playerId }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || 'Rematch request failed');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Respond to a rematch request
+   */
+  async respondRematch(accepted: boolean): Promise<{ success: boolean; newGameId?: string }> {
+    if (!this.gameId || !this.playerId) {
+      throw new Error('Not connected to game');
+    }
+
+    const response = await fetch(`${this.config.serverUrl}/api/games/${this.gameId}/rematch/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId: this.playerId, accepted }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || 'Rematch response failed');
+    }
+
+    return response.json();
+  }
+
+  /**
+   * Cancel a rematch request
+   */
+  async cancelRematch(): Promise<{ success: boolean; message?: string }> {
+    if (!this.gameId || !this.playerId) {
+      throw new Error('Not connected to game');
+    }
+
+    const response = await fetch(`${this.config.serverUrl}/api/games/${this.gameId}/rematch/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId: this.playerId }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || 'Cancel rematch failed');
+    }
+
+    return response.json();
   }
 }
 
