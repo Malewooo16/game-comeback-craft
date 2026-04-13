@@ -360,12 +360,16 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
   // Redirect to game when lobby becomes active
   useEffect(() => {
     if (lobby?.status === 'active' && lobby?.gameId && user) {
+      console.log('[Lobby] Lobby is active, checking if I should start game. My ID:', user.id);
       const myPlayer = lobby.players.find(p => p.id === user.id);
       if (myPlayer) {
+        console.log('[Lobby] Found myself in players, starting game:', lobby.gameId);
         onGameStart(lobby.gameId, myPlayer.id);
+      } else {
+        console.warn('[Lobby] I am not in the players list for this active lobby');
       }
     }
-  }, [lobby?.status, lobby?.gameId, lobby?.players, user, onGameStart]);
+  }, [lobby?.status, lobby?.gameId, lobby?.players, user?.id, onGameStart]);
 
   const handleCreateGame = async () => {
     setLoading(true);
@@ -453,13 +457,16 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
           throw new Error('Failed to update ready state');
         }
       }
+      // On success, we expect a Pusher update, but for better responsiveness, 
+      // some apps might update local state here too. 
+      // We rely on Pusher for consistency across all clients.
     } catch (err) {
       setError('Failed to update ready state');
     }
   };
 
   const handleStartGame = async () => {
-    if (!lobby) return;
+    if (!lobby || !user) return;
     setLoading(true);
     try {
       const token = localStorage.getItem('token');
@@ -483,6 +490,13 @@ export const MultiplayerLobby: React.FC<MultiplayerLobbyProps> = ({
         } else {
           const data = await response.json();
           throw new Error(data.error || 'Failed to start game');
+        }
+      } else {
+        // Fallback for host: if Pusher is slow, transition manually using the response
+        const data = await response.json();
+        console.log('[Lobby] Game started successfully by host, manual transition fallback');
+        if (data.gameId) {
+          onGameStart(data.gameId, user.id);
         }
       }
     } catch (err) {
