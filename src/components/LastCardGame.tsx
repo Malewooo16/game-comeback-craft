@@ -406,7 +406,7 @@ const GameUI = ({
 
         {/* Hand navigation */}
         {player && player.hand.length > MAX_VISIBLE && (
-          <div className="absolute bottom-12 left-1/2 -translate-x-1/2 w-[340px] md:w-[460px] flex justify-between z-[20] pointer-events-none">
+          <div className="absolute bottom-12 left-1/2 -translate-x-1/2 w-[340px] md:w-[560px] flex justify-between z-[20] pointer-events-none">
             <button onClick={() => rotateHand(-1)}
               className="pointer-events-auto w-8 h-8 rounded-full bg-gold/20 border border-gold/40 text-gold flex items-center justify-center hover:bg-gold/40 transition-colors shadow-lg">
               ◀
