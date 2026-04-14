@@ -1,6 +1,7 @@
 import { useGame } from '../game/useGame';
 import { useServerMultiplayerGame, ServerMultiplayerGameConfig } from '../hooks/useServerMultiplayerGame';
 import { cardUrl, Card } from '../game/engine';
+import { useIsMobile } from '../hooks/use-mobile';
 
 interface LastCardGameProps {
   config?: {
@@ -147,6 +148,7 @@ const GameUI = ({
   leaveGame, newGame, onBackToMode, localPlayerIndex, mode,
   is1v1, rematchStatus, isPending, requestRematch, acceptRematch, declineRematch, cancelRematch
 }: GameUIProps) => {
+  const isMobile = useIsMobile();
   const player = localPlayerIndex !== -1 ? G.players[localPlayerIndex] : null;
   const topCard = G.discard[G.discard.length - 1];
   const isEliminated = player?.isEliminated;
@@ -170,7 +172,7 @@ const GameUI = ({
   };
 
   // Compute visible hand cards
-  const MAX_VISIBLE = 7;
+  const MAX_VISIBLE = isMobile ? 5 : 7;
   const handCards: { card: Card; realIndex: number }[] = [];
   if (player && player.hand.length > 0) {
     const n = player.hand.length;
@@ -382,11 +384,11 @@ const GameUI = ({
                   className={`absolute bottom-0 origin-bottom transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${isActive ? (isInteractionEnabled ? 'cursor-pointer hover:brightness-110' : 'cursor-wait') : 'grayscale-[50%] brightness-[0.65] cursor-not-allowed'}`}
                   style={{
                     left: `calc(50% + ${(i - (handCards.length - 1) / 2) * 50}px)`,
-                    transform: `rotate(${angle}deg) translateY(-${lift}px)`,
+                    transform: `translateX(-50%) rotate(${angle}deg) translateY(-${lift}px)`,
                     zIndex: 10 + i,
                   }}
-                  onMouseEnter={e => { if (isActive && isInteractionEnabled) (e.currentTarget.style.transform = `rotate(${angle}deg) translateY(-${lift + 22}px) scale(1.1)`); }}
-                  onMouseLeave={e => { e.currentTarget.style.transform = `rotate(${angle}deg) translateY(-${lift}px) scale(1)`; }}
+                  onMouseEnter={e => { if (isActive && isInteractionEnabled) (e.currentTarget.style.transform = `translateX(-50%) rotate(${angle}deg) translateY(-${lift + 22}px) scale(1.1)`); }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = `translateX(-50%) rotate(${angle}deg) translateY(-${lift}px) scale(1)`; }}
                 >
                   <div className={`w-[72px] h-[101px] rounded-[7px] bg-white border-[1.5px] border-gray-300 shadow-lg overflow-hidden transition-all ${isActive ? 'ring-2 ring-emerald-400 ring-offset-2 ring-offset-[#0a3a2a]' : ''}`}>
                     <img src={cardUrl(card)} alt={card.id} className="w-full h-full object-contain" />
@@ -403,8 +405,8 @@ const GameUI = ({
         </div>
 
         {/* Hand navigation */}
-        {player && player.hand.length > 7 && (
-          <div className="absolute bottom-5 left-0 right-0 flex justify-between px-[15%] md:px-[270px] z-[20] pointer-events-none">
+        {player && player.hand.length > MAX_VISIBLE && (
+          <div className="absolute bottom-12 left-1/2 -translate-x-1/2 w-[340px] md:w-[460px] flex justify-between z-[20] pointer-events-none">
             <button onClick={() => rotateHand(-1)}
               className="pointer-events-auto w-8 h-8 rounded-full bg-gold/20 border border-gold/40 text-gold flex items-center justify-center hover:bg-gold/40 transition-colors shadow-lg">
               ◀
