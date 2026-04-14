@@ -172,7 +172,7 @@ const GameUI = ({
   };
 
   // Compute visible hand cards
-  const MAX_VISIBLE = isMobile ? 5 : 7;
+  const MAX_VISIBLE = isMobile ? 4 : 7;
   const handCards: { card: Card; realIndex: number }[] = [];
   if (player && player.hand.length > 0) {
     const n = player.hand.length;
