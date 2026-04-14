@@ -58,20 +58,31 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
           }
 
           if (updatedState.over) {
-            // Priority 1: Check who was marked as winner by engine or has empty hand
-            let winner = updatedState.players.find(p => p.hand.length === 0 && !p.victoryDrawPending && !p.isEliminated);
-            
-            // Priority 2: In abandonment/elimination, search for the last standing player
-            if (!winner) {
-              const activePlayers = updatedState.players.filter(p => !p.isEliminated);
-              if (activePlayers.length === 1) {
-                winner = activePlayers[0];
+            // ONLY set the modal if it's not already showing a rematch-related state
+            // This prevents the flickering where every Pusher update resets the modal 
+            // and potentially resets the Rematch button visibility.
+            setModal(prevModal => {
+              if (prevModal && (
+                prevModal.title.includes('Wins') || 
+                prevModal.title.includes('Win!') || 
+                prevModal.title.includes('Rematch') ||
+                prevModal.title === 'Game Over'
+              )) {
+                return prevModal;
               }
-            }
-            
-            setModal({
-              title: winner?.id === config.localPlayerId ? 'You Win!' : (winner?.name || 'Someone') + ' Wins!',
-              message: 'Game over!',
+
+              let winner = updatedState.players.find(p => p.hand.length === 0 && !p.victoryDrawPending && !p.isEliminated);
+              if (!winner) {
+                const activePlayers = updatedState.players.filter(p => !p.isEliminated);
+                if (activePlayers.length === 1) {
+                  winner = activePlayers[0];
+                }
+              }
+
+              return {
+                title: winner?.id === config.localPlayerId ? 'You Win!' : (winner?.name || 'Someone') + ' Wins!',
+                message: 'Game over!',
+              };
             });
             setStatusMsg('Game Over');
           } else if (updatedState.players && updatedState.players.length > updatedState.turnIndex) {
