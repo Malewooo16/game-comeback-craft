@@ -367,12 +367,12 @@ const GameUI = ({
         </div>
 
         {/* Player Hand area */}
-        <div className="absolute bottom-0 left-0 right-0 h-[175px] flex flex-col items-center justify-end pb-2 z-[15]">
+        <div className="absolute bottom-0 left-0 right-0 h-[150px] md:h-[175px] flex flex-col items-center justify-end pb-3 md:pb-2 z-[15]">
           <div className="text-foreground/70 text-[11px] tracking-[2px] uppercase mb-1.5 flex items-center gap-1.5">
             <span className={`w-2 h-2 rounded-full bg-gold shadow-[0_0_8px_hsl(var(--gold))] ${isMyTurn ? 'animate-pulse' : 'opacity-0'}`} />
             <span>Your Hand</span>
           </div>
-          <div className="relative w-full h-[130px] flex items-end justify-center">
+          <div className="relative w-full h-[110px] md:h-[130px] flex items-end justify-center mb-0">
             {handCards.map(({ card, realIndex }, i) => {
               const angle = aStart + step * i;
               const lift = Math.abs(angle) * 0.4;
@@ -383,14 +383,14 @@ const GameUI = ({
                   onClick={() => isInteractionEnabled && playCard(realIndex)}
                   className={`absolute bottom-0 origin-bottom transition-all duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${isActive ? (isInteractionEnabled ? 'cursor-pointer hover:brightness-110' : 'cursor-wait') : 'grayscale-[50%] brightness-[0.65] cursor-not-allowed'}`}
                   style={{
-                    left: `calc(50% + ${(i - (handCards.length - 1) / 2) * 50}px)`,
+                    left: `calc(50% + ${(i - (handCards.length - 1) / 2) * (isMobile ? 35 : 50)}px)`,
                     transform: `translateX(-50%) rotate(${angle}deg) translateY(-${lift}px)`,
                     zIndex: 10 + i,
                   }}
                   onMouseEnter={e => { if (isActive && isInteractionEnabled) (e.currentTarget.style.transform = `translateX(-50%) rotate(${angle}deg) translateY(-${lift + 22}px) scale(1.1)`); }}
                   onMouseLeave={e => { e.currentTarget.style.transform = `translateX(-50%) rotate(${angle}deg) translateY(-${lift}px) scale(1)`; }}
                 >
-                  <div className={`w-[72px] h-[101px] rounded-[7px] bg-white border-[1.5px] border-gray-300 shadow-lg overflow-hidden transition-all ${isActive ? 'ring-2 ring-emerald-400 ring-offset-2 ring-offset-[#0a3a2a]' : ''}`}>
+                  <div className={`${isMobile ? 'w-[56px] h-[78px]' : 'w-[72px] h-[101px]'} rounded-[7px] bg-white border-[1.5px] border-gray-300 shadow-lg overflow-hidden transition-all ${isActive ? 'ring-2 ring-emerald-400 ring-offset-2 ring-offset-[#0a3a2a]' : ''}`}>
                     <img src={cardUrl(card)} alt={card.id} className="w-full h-full object-contain" />
                   </div>
                 </div>
@@ -406,7 +406,7 @@ const GameUI = ({
 
         {/* Hand navigation */}
         {player && player.hand.length > MAX_VISIBLE && (
-          <div className="absolute bottom-12 left-1/2 -translate-x-1/2 w-[340px] md:w-[560px] flex justify-between z-[20] pointer-events-none">
+          <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-[285px] md:w-[560px] flex justify-between z-[20] pointer-events-none">
             <button onClick={() => rotateHand(-1)}
               className="pointer-events-auto w-8 h-8 rounded-full bg-gold/20 border border-gold/40 text-gold flex items-center justify-center hover:bg-gold/40 transition-colors shadow-lg">
               ◀
@@ -421,7 +421,7 @@ const GameUI = ({
         {/* Last Card button */}
         {canLC && (
           <button onClick={callLastCard}
-            className="absolute bottom-[52px] right-5 bg-gradient-to-br from-game-red to-red-900 border-2 border-red-400/40 text-white font-display text-sm font-bold px-4 py-2 rounded-lg tracking-wider uppercase z-[25] shadow-[0_4px_16px_rgba(204,34,34,0.4)] hover:scale-105 transition-transform animate-bounce">
+            className="absolute bottom-[140px] md:bottom-[52px] right-3 md:right-5 bg-gradient-to-br from-game-red to-red-900 border-2 border-red-400/40 text-white font-display text-xs md:text-sm font-bold px-3 md:px-4 py-2 rounded-lg tracking-wider uppercase z-[25] shadow-[0_4px_16px_rgba(204,34,34,0.4)] hover:scale-105 transition-transform animate-bounce">
             Last Card!
           </button>
         )}

@@ -64,7 +64,7 @@ export const Signup: React.FC = () => {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Name and Email in same row */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-gold/60 text-[10px] font-bold uppercase tracking-[2px] ml-1">Username</label>
                 <input

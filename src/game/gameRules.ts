@@ -450,6 +450,52 @@ export function drawCard(state: GameState, playerIndex: number): GameMoveResult 
     newState.stack = [];
   }
 
+  // Handle Victory Draw scenario
+  if (player.victoryDrawPending) {
+    if (newState.pending > 0) {
+      // Attacked during victory draw! Back in the game.
+      const cardsToAdd = newState.pending;
+      const { state: drawState, cards } = drawCards(newState, cardsToAdd);
+      const targetPlayer = drawState.players[playerIndex];
+      targetPlayer.hand.push(...cards);
+      targetPlayer.victoryDrawPending = false;
+      targetPlayer.lastCalled = false;
+      drawState.pending = 0;
+      drawState.jokerOnTop = false;
+      return { 
+        state: drawState, 
+        moveType: 'draw', 
+        success: true, 
+        message: `${player.name} hit while at zero! Drew ${cardsToAdd} penalty cards.` 
+      };
+    } else {
+      // Normal victory draw
+      const { state: drawState, cards } = drawCards(newState, 1);
+      if (cards.length === 0) return { state: newState, moveType: 'draw', success: false, message: 'Deck empty' };
+      
+      const drawnCard = cards[0];
+      const { state: finalState, won } = processVictoryDraw(drawState, drawState.players[playerIndex], drawnCard);
+      
+      if (won) {
+        finalState.over = true;
+        return {
+          state: finalState,
+          moveType: 'draw',
+          success: true,
+          message: 'Victory!',
+          winner: finalState.players[playerIndex],
+        };
+      } else {
+        return {
+          state: finalState,
+          moveType: 'draw',
+          success: true,
+          message: 'Failed Victory Draw',
+        };
+      }
+    }
+  }
+
   let cardsToAdd = 1;
   if (newState.pending > 0) {
     cardsToAdd = newState.pending;
@@ -458,7 +504,8 @@ export function drawCard(state: GameState, playerIndex: number): GameMoveResult 
   }
 
   const { state: drawState, cards } = drawCards(newState, cardsToAdd);
-  player.hand.push(...cards);
+  const targetPlayer = drawState.players[playerIndex];
+  targetPlayer.hand.push(...cards);
 
   return { state: drawState, moveType: 'draw', success: true, message: `Drew ${cardsToAdd} card(s)` };
 }

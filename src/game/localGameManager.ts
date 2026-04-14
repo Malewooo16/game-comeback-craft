@@ -236,12 +236,18 @@ export class LocalGameManager {
     this.state = result.state;
 
     if (result.success) {
-      // Only toast for draw penalty events
-      if (this.state.pending > 0) {
-        this.emitToast('Draw penalty: ' + this.state.pending);
+      if (result.winner) {
+        this.handleVictory(result.winner);
+      } else {
+        // Only toast for draw penalty events or special draw messages
+        if (result.message.includes('Drew') && this.state.pending > 0) {
+          this.emitToast('Draw penalty: ' + this.state.pending);
+        } else if (result.message !== 'Cards drawn' && result.message !== 'Drew 1 card(s)') {
+          this.emitToast(result.message);
+        }
+        // Schedule CPU turn after delay
+        this.scheduleNextTurn();
       }
-      // Schedule CPU turn after delay
-      this.scheduleNextTurn();
     } else {
       this.emitToast(result.message);
     }
@@ -347,6 +353,23 @@ export class LocalGameManager {
     // Store the onChange callback for use in executeCPUTurn
     const onChange = (this as any)._onChangeCallback;
 
+    // Handle victory draw
+    if (player.victoryDrawPending) {
+      console.log('>>> CPU performing victory draw');
+      const result = rules.drawCard(this.state, this.state.turnIndex);
+      this.state = result.state;
+      
+      if (result.winner) {
+        this.handleVictory(result.winner);
+      } else {
+        this.emitToast(result.message);
+      }
+      
+      if (onChange) onChange();
+      this.scheduleNextTurn();
+      return;
+    }
+
     // Handle pending (draw penalty)
     if (this.state.pending > 0) {
       console.log('>>> Handling pending penalty:', this.state.pending);
@@ -355,16 +378,16 @@ export class LocalGameManager {
         console.log('>>> CPU counters with:', counter.id);
         const result = rules.playCard(this.state, this.state.turnIndex, player.hand.indexOf(counter));
         this.state = result.state;
-        // Removed: counter toast - only important events show toasts
         if (onChange) onChange();
         this.scheduleNextTurn();
         return;
       }
 
       console.log('>>> CPU draws penalty cards');
+      const pendingCount = this.state.pending;
       const drawResult = rules.drawCard(this.state, this.state.turnIndex);
       this.state = drawResult.state;
-      this.emitToast(player.name + ' draws ' + this.state.pending + ' cards!');
+      this.emitToast(player.name + ' draws ' + pendingCount + ' cards!');
       if (onChange) onChange();
       this.scheduleNextTurn();
       return;
@@ -390,18 +413,13 @@ export class LocalGameManager {
         this.emitToast('Draw one card to win');
       }
       
-      // Removed: CPU stack play toast - only show important toasts
-      
       if (onChange) onChange();
       
       if (stackResult.winner) {
-        this.emitModal(
-          stackResult.winner.id === 0 ? 'You Win!' : stackResult.winner.name + ' Wins!',
-          'Game over!',
-        );
+        this.handleVictory(stackResult.winner);
+      } else {
+        this.scheduleNextTurn();
       }
-      
-      this.scheduleNextTurn();
       return;
     }
 
@@ -425,13 +443,10 @@ export class LocalGameManager {
       }
 
       if (result.winner) {
-        this.emitModal(
-          result.winner.id === 0 ? 'You Win!' : result.winner.name + ' Wins!',
-          'Game over!',
-        );
+        this.handleVictory(result.winner);
+      } else {
+        this.scheduleNextTurn();
       }
-
-      this.scheduleNextTurn();
       return;
     }
 
@@ -487,11 +502,7 @@ export class LocalGameManager {
         this.state = result.state;
 
         if (result.winner) {
-          this.emitToast('Victory!');
-          this.emitModal(
-            result.winner.id === 0 ? 'You Win!' : result.winner.name + ' Wins!',
-            'Game over!',
-          );
+          this.handleVictory(result.winner);
         }
 
         this.scheduleNextTurn();

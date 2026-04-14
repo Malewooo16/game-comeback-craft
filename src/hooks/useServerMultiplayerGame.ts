@@ -24,6 +24,7 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
   const [pendingRematchOpponent, setPendingRematchOpponent] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
   const moveSequence = useRef(0);
+  const lastActionIdRef = useRef<string | null>(null);
 
   const onChange = useCallback(() => {
     setTick(t => t + 1);
@@ -62,10 +63,11 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
           
           setIsPendingMove(false);
           
-          if (updatedState.lastActionMessage) {
+          if (updatedState.lastActionMessage && updatedState.lastActionId !== lastActionIdRef.current) {
+            lastActionIdRef.current = updatedState.lastActionId || null;
             setToastMsg(updatedState.lastActionMessage);
             clearTimeout(toastTimer.current);
-            toastTimer.current = setTimeout(() => setToastMsg(null), 1000);
+            toastTimer.current = setTimeout(() => setToastMsg(null), 1500);
           }
 
           if (updatedState.over) {
@@ -74,7 +76,9 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
               // or a rematch request modal.
               if (prevModal && (
                 prevModal.title.includes('Rematch') ||
-                prevModal.title === 'Game Over'
+                prevModal.title === 'Game Over' ||
+                prevModal.title.includes('Win!') ||
+                prevModal.title.includes('Wins!')
               )) {
                 return prevModal;
               }
