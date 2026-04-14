@@ -26,35 +26,44 @@ const Index = () => {
   const [initialLobby, setInitialLobby] = useState<any>(null);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // Handle game start from URL params (for rematch)
+  // Handle game start from URL params (for rematch and direct joins)
   useEffect(() => {
     const gameId = searchParams.get('gameId');
     const playerId = searchParams.get('playerId');
     const isRematch = searchParams.get('rematch');
+    
     if (gameId && playerId) {
-      console.log('[Index] Starting rematch game:', gameId, 'playerId:', playerId);
-      // Show syncing view briefly for rematch to give time for server connection
-      if (isRematch) {
-        setIsSyncing(true);
-        setTimeout(() => {
-          setGameConfig({ 
-            mode: 'multiplayer', 
-            gameId, 
-            playerId: parseInt(playerId, 10) 
-          });
-          setCurrentPage('game');
-          setIsSyncing(false);
-        }, 1500);
-      } else {
+      const pId = parseInt(playerId, 10);
+      console.log('[Index] URL params detected. Starting game:', gameId, 'playerId:', pId);
+      
+      const startMPGame = () => {
         setGameConfig({ 
           mode: 'multiplayer', 
           gameId, 
-          playerId: parseInt(playerId, 10) 
+          playerId: pId 
         });
         setCurrentPage('game');
+        setIsSyncing(false);
+      };
+
+      if (isRematch) {
+        setIsSyncing(true);
+        // Short delay to ensure server state is ready and provide "syncing" feel
+        const timer = setTimeout(startMPGame, 1000);
+        return () => clearTimeout(timer);
+      } else {
+        startMPGame();
       }
     }
-  }, [searchParams, navigate]);
+  }, [searchParams]);
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!loading && !user) {
+      console.log('[Index] No user detected, redirecting to login');
+      navigate('/login');
+    }
+  }, [user, loading, navigate]);
 
   // Handle join link and auto-restore active session
   useEffect(() => {
