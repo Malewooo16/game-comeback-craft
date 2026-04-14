@@ -48,7 +48,18 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
         // Listen for game state updates via Pusher
         const unsubscribeState = client.on('game-state', (updatedState: GameState) => {
           console.log('State update from Pusher');
-          setState(updatedState);
+          
+          setState(prevState => {
+            // If we were in a "Game Over" state and the new state is NOT over,
+            // it means a new round or rematch has started. Reset UI states.
+            if (prevState?.over && !updatedState.over) {
+              setRematchStatus('idle');
+              setModal(null);
+              setPendingRematchOpponent(null);
+            }
+            return updatedState;
+          });
+          
           setIsPendingMove(false);
           
           if (updatedState.lastActionMessage) {
@@ -58,13 +69,10 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
           }
 
           if (updatedState.over) {
-            // ONLY set the modal if it's not already showing a rematch-related state
-            // This prevents the flickering where every Pusher update resets the modal 
-            // and potentially resets the Rematch button visibility.
             setModal(prevModal => {
+              // Only skip if the current modal is ALREADY the correct game over modal
+              // or a rematch request modal.
               if (prevModal && (
-                prevModal.title.includes('Wins') || 
-                prevModal.title.includes('Win!') || 
                 prevModal.title.includes('Rematch') ||
                 prevModal.title === 'Game Over'
               )) {
@@ -79,8 +87,13 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
                 }
               }
 
+              const newTitle = winner?.id === config.localPlayerId ? 'You Win!' : (winner?.name || 'Someone') + ' Wins!';
+              
+              // If the title is already set to this, don't update (prevents flicker)
+              if (prevModal?.title === newTitle) return prevModal;
+
               return {
-                title: winner?.id === config.localPlayerId ? 'You Win!' : (winner?.name || 'Someone') + ' Wins!',
+                title: newTitle,
                 message: 'Game over!',
               };
             });
