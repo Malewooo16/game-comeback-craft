@@ -72,14 +72,14 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
 
           if (updatedState.over) {
             setModal(prevModal => {
-              // Only skip if the current modal is ALREADY the correct game over modal
-              // or a rematch request modal.
-              if (prevModal && (
-                prevModal.title.includes('Rematch') ||
-                prevModal.title === 'Game Over' ||
-                prevModal.title.includes('Win!') ||
-                prevModal.title.includes('Wins!')
-              )) {
+              // If already showing a game over modal (with specific title), keep it
+              if (prevModal && prevModal.title.match(/You Win!|Wins!|Game Over/)) {
+                return prevModal;
+              }
+
+              // If game is over and we don't have a game over modal, show one
+              // But only if there isn't already a modal (to prevent overwriting other modals)
+              if (prevModal) {
                 return prevModal;
               }
 

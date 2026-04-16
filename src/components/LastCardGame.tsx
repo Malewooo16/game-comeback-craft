@@ -153,15 +153,18 @@ const GameUI = ({
   const topCard = G.discard[G.discard.length - 1];
   const isEliminated = player?.isEliminated;
   
+  // Game over state - disable all interactions
+  const isGameOver = G.over;
+  
   // Logical turn state (for rendering visibility/highlights)
   const isMyTurn = G.turnIndex === localPlayerIndex && !G.over && !isEliminated;
   // Interaction state (for blocking clicks during network sync)
-  const isInteractionEnabled = isMyTurn && !isPending;
+  const isInteractionEnabled = isMyTurn && !isPending && !isGameOver;
   
   const canLC = player && 
                 gameManager.canCallLastCard(player) && 
                 !player.lastCalled && 
-                !G.over && 
+                !isGameOver && 
                 !isEliminated;
 
   const showRules = () => {
@@ -341,7 +344,7 @@ const GameUI = ({
               )}
             </div>
             <div className="flex gap-2">
-              {isMyTurn && G.stack?.length >= 1 && (
+              {isInteractionEnabled && G.stack?.length >= 1 && (
                 <button 
                   onClick={playStack}
                   disabled={isPending}
@@ -433,7 +436,7 @@ const GameUI = ({
         <div className="flex items-center gap-2">
           <div className={`w-1.5 h-1.5 rounded-full ${mode === 'multiplayer' ? 'bg-emerald-500' : 'bg-blue-500'} shadow-[0_0_8px_currentColor]`} />
           <span className="bg-gold/15 border border-gold/40 text-gold text-[11px] px-2.5 py-0.5 rounded-full tracking-wider font-bold">
-            {G.turnIndex === localPlayerIndex ? 'YOUR TURN' : `${G.players[G.turnIndex]?.name.toUpperCase()}'S TURN`}
+            {isGameOver ? 'GAME OVER' : (G.turnIndex === localPlayerIndex ? 'YOUR TURN' : `${G.players[G.turnIndex]?.name.toUpperCase()}'S TURN`)}
           </span>
         </div>
       </div>
