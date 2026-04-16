@@ -25,6 +25,104 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
   const moveSequence = useRef(0);
   const lastActionIdRef = useRef<string | null>(null);
+  const serverVersionRef = useRef<number>(0);
+  const clientVersionRef = useRef<number>(0);
+  const lastProcessedServerVersion = useRef<number>(-1);
+  
+  // Animation triggers - consumed when shown
+  const [animTriggers, setAnimTriggers] = useState<{
+    stackPlayed?: boolean;
+    cardPlayed?: boolean;
+    turnChange?: boolean;
+    penaltyApplied?: boolean;
+  }>({});
+  
+  // Track previous state to detect new animations needed
+  const prevStateRef = useRef<GameState | null>(null);
+  
+  // Stack tracking - cards added locally but not yet sent to server
+  interface LocalStackCard {
+    card: Card;
+    actionId: string;
+    timestamp: number;
+    wildSuit?: string;
+  }
+  const localStackRef = useRef<LocalStackCard[]>([]);
+  
+  // Optimistic Updates state
+  interface PendingMove {
+    type: 'play' | 'draw' | 'callLastCard' | 'playStack' | 'undoStack';
+    payload: any;
+    actionId: string;
+    timestamp: number;
+    sequence: number;
+  }
+  const pendingMovesRef = useRef<PendingMove[]>([]);
+
+  const applyMoveToState = useCallback((state: GameState, move: PendingMove, playerId: number): GameState => {
+    // Deep clone state to avoid mutations
+    const newState = JSON.parse(JSON.stringify(state)) as GameState;
+    const playerIndex = newState.players.findIndex(p => p.id === playerId);
+    if (playerIndex === -1) return newState;
+
+    let result: any;
+    switch (move.type) {
+      case 'play': {
+        const player = newState.players[playerIndex];
+        const card = player.hand[move.payload.cardIndex];
+        if (!card) return newState;
+
+        // Only stack if you have 2+ cards of same value (single cards go to discard)
+        // Exception: can always add to existing stack
+        const sameValue = player.hand.filter(c => c.value === card.value).length;
+        const isStacking = newState.stack.length > 0 || card.value === 'jack' || 
+          (card.value === 'joker' && player.hand.filter(c => c.value === 'joker').length > 1) || 
+          sameValue > 1;
+
+        if (isStacking && newState.stack.length > 0) {
+          // Adding to existing stack
+          newState.stack.push(card);
+          player.hand.splice(move.payload.cardIndex, 1);
+          return newState;
+        } else if (isStacking) {
+          // Creating new stack (2+ same value or jack/joker)
+          newState.stack.push(card);
+          player.hand.splice(move.payload.cardIndex, 1);
+          return newState;
+        } else {
+          // Direct play to discard - advance turn
+          player.hand.splice(move.payload.cardIndex, 1);
+          newState.discard.push(card);
+          newState.turnIndex = rules.computeNextTurnIndex(newState);
+          return newState;
+        }
+      }
+      case 'draw':
+        result = rules.drawCard(newState, playerIndex);
+        if (result.success) {
+          const nextState = { ...result.state };
+          nextState.turnIndex = rules.computeNextTurnIndex(nextState);
+          return nextState;
+        }
+        return result.state;
+      case 'playStack':
+        result = rules.playStack(newState, playerIndex, move.payload.wildSuit);
+        if (result.success) {
+          const nextState = { ...result.state };
+          nextState.turnIndex = rules.computeNextTurnIndex(nextState);
+          return nextState;
+        }
+        return result.state;
+      case 'callLastCard':
+        result = rules.callLastCard(newState, playerIndex);
+        return result.state;
+      case 'undoStack':
+        result = rules.undoStackCard(newState, playerIndex, move.payload.stackIndex);
+        return result.state;
+      default:
+        return newState;
+    }
+  }, []);
 
   const onChange = useCallback(() => {
     setTick(t => t + 1);
@@ -48,21 +146,87 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
 
         // Listen for game state updates via Pusher
         const unsubscribeState = client.on('game-state', (updatedState: GameState) => {
-          console.log('State update from Pusher', { over: updatedState.over, winner: updatedState.players?.find(p => p.hand.length === 0)?.name });
+          console.log('State update from Pusher', { 
+            over: updatedState.over, 
+            lastActionId: updatedState.lastActionId,
+            serverVersion: updatedState.version,
+            pendingCount: pendingMovesRef.current.length
+          });
           
+          // STALE UPDATE DETECTION - Ignore old versions
+          if (updatedState.version !== undefined) {
+            if (updatedState.version <= lastProcessedServerVersion.current) {
+              console.log(`[Reconcile] Stale update ignored: server v${updatedState.version} <= processed v${lastProcessedServerVersion.current}`);
+              return;
+            }
+            lastProcessedServerVersion.current = updatedState.version;
+          }
+          
+          // RECONCILIATION LOGIC
+          if (updatedState.lastActionId) {
+            // Find the index of the move confirmed by the server
+            const confirmedIdx = pendingMovesRef.current.findIndex(m => m.actionId === updatedState.lastActionId);
+            
+            if (confirmedIdx !== -1) {
+              // Remove confirmed move and all moves before it
+              console.log(`[Reconcile] Server confirmed move: ${updatedState.lastActionId}. Clearing ${confirmedIdx + 1} pending moves.`);
+              pendingMovesRef.current = pendingMovesRef.current.slice(confirmedIdx + 1);
+            } else {
+              // Server state might already include some moves - clear all pending since server has authoritative state
+              console.log('[Reconcile] Server state has lastActionId but not in pending - clearing all pending');
+              pendingMovesRef.current = [];
+            }
+          }
+
+          // Apply any remaining pending moves to the server state
+          // Skip playStack since server already handled it
+          let reconciledState = updatedState;
+          const pendingNonStackMoves = pendingMovesRef.current.filter(m => m.type !== 'playStack');
+          
+          if (pendingNonStackMoves.length > 0) {
+            console.log(`[Reconcile] Re-applying ${pendingNonStackMoves.length} pending moves to server state`);
+            pendingNonStackMoves.forEach(move => {
+              console.log(`[Reconcile] Re-applying move: ${move.type} ${move.actionId}`);
+              reconciledState = applyMoveToState(reconciledState, move, config.localPlayerId);
+            });
+          } else {
+            console.log('[Reconcile] No pending moves to re-apply (or playStack skipped)');
+          }
+
           setState(prevState => {
             // If we were in a "Game Over" state and the new state is NOT over,
             // it means a new round or rematch has started. Reset UI states.
-            if (prevState?.over && !updatedState.over) {
+            if (prevState?.over && !reconciledState.over) {
               console.log('[State] Game over -> not over, resetting UI');
               setRematchStatus('idle');
               setModal(null);
               setPendingRematchOpponent(null);
             }
-            return updatedState;
+
+            // Detect animation triggers
+            const triggers: typeof animTriggers = {};
+            if (prevState) {
+              // Stack played - server stack went from non-empty to empty
+              if (prevState.stack.length > 0 && reconciledState.stack.length === 0) {
+                triggers.stackPlayed = true;
+              }
+              // Card played - check if any player's hand changed unexpectedly
+              if (prevState.turnIndex !== reconciledState.turnIndex) {
+                triggers.turnChange = true;
+              }
+              // Penalty changed
+              if (prevState.pending !== reconciledState.pending) {
+                triggers.penaltyApplied = true;
+              }
+            }
+            if (Object.keys(triggers).length > 0) {
+              setAnimTriggers(triggers);
+            }
+
+            return reconciledState;
           });
           
-          setIsPendingMove(false);
+          setIsPendingMove(pendingMovesRef.current.length > 0);
           
           if (updatedState.lastActionMessage && updatedState.lastActionId !== lastActionIdRef.current) {
             lastActionIdRef.current = updatedState.lastActionId || null;
@@ -222,93 +386,100 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     };
   }, [config.gameId, config.localPlayerId, onChange]);
 
+  // syncRequest must be defined before other move functions that use it
+  const syncRequest = useCallback(async () => {
+    try {
+      const syncedState = await clientRef.current.syncRequest();
+      setState(syncedState);
+    } catch (error) {
+      console.error('Failed to request sync:', error);
+      setToastMsg('Failed to sync with server');
+    }
+  }, []);
+
   const playCard = useCallback(
     async (cardIndex: number) => {
       if (!state) return;
 
       try {
-        let isMovingToStack = false;
+        const actionId = `play-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const player = state.players.find(p => p.id === config.localPlayerId);
+        const card = player?.hand[cardIndex];
+        const sequence = moveSequence.current++;
+        
+        // Determine if this will be a stacking move BEFORE applying
+        // Only stack if you have 2+ cards of same value (single cards go to discard)
+        const sameValue = player?.hand.filter(c => c.value === card?.value).length ?? 0;
+        const isStacking = state.stack.length > 0 || card?.value === 'jack' || 
+          (card?.value === 'joker' && player?.hand.filter(c => c.value === 'joker').length > 1) || 
+          sameValue > 1;
 
-        // Optimistically update local state for immediate feedback
+        const move: PendingMove = { 
+          type: 'play', 
+          payload: { cardIndex }, 
+          actionId,
+          timestamp: Date.now(),
+          sequence,
+        };
+
+        // Apply the move optimistically
         setState(prevState => {
           if (!prevState) return prevState;
-          const player = prevState.players.find(p => p.id === config.localPlayerId);
-          if (!player || cardIndex < 0 || cardIndex >= player.hand.length) return prevState;
           
-          const card = player.hand[cardIndex];
+          const newState = applyMoveToState(prevState, move, config.localPlayerId);
+          const wasStacking = newState.stack.length > prevState.stack.length;
           
-          if (!rules.isPlayable(prevState, card)) {
-            console.warn('Optimistic update blocked: card not playable');
-            return prevState;
-          }
-          
-          const newState = { ...prevState, players: prevState.players.map(p => ({ ...p })) };
-          const localPlayer = newState.players.find(p => p.id === config.localPlayerId)!;
-          
-          // Remove card from hand
-          localPlayer.hand.splice(cardIndex, 1);
-          newState.offset = localPlayer.hand.length > 0 ? newState.offset % localPlayer.hand.length : 0;
-          
-          // Logic to determine if this card creates or joins a stack
-          if (newState.stack.length > 0) {
-            newState.stack.push(card);
-            isMovingToStack = true;
-          } else if (card.value === 'joker') {
-            const otherJokers = localPlayer.hand.filter(c => c.value === 'joker');
-            if (otherJokers.length === 0) {
-              newState.discard.push(card);
-              isMovingToStack = false;
-            } else {
-              newState.stack.push(card);
-              isMovingToStack = true;
-            }
-          } else if (card.value === 'jack') {
-            newState.stack.push(card);
-            isMovingToStack = true;
+          if (wasStacking) {
+            // Track stacking card locally - will be sent when playStack is called
+            console.log('[Stacking] Card added to local stack');
           } else {
-            const sameValue = localPlayer.hand.filter(c => c.value === card.value);
-            if (sameValue.length >= 1) {
-              newState.stack.push(card);
-              isMovingToStack = true;
-            } else {
-              newState.discard.push(card);
-              isMovingToStack = false;
-            }
+            // Non-stacking: add to pending moves queue for reconciliation
+            pendingMovesRef.current.push(move);
           }
           
           return newState;
         });
 
-        // CRITICAL: If the card was added to a stack, do NOT send a network request yet.
-        // We only send the move when they click "Play Stack".
-        if (isMovingToStack) {
-          console.log('[Stacking] Card added to local stack, skipping network sync');
-          return;
+        // Only send to server if NOT stacking
+        if (!isStacking) {
+          setIsPendingMove(true);
+          
+          const networkMove = {
+            gameId: config.gameId,
+            playerId: config.localPlayerId,
+            moveType: 'play' as const,
+            payload: { cardIndex },
+            timestamp: Date.now(),
+            clientSequence: sequence,
+            actionId,
+          };
+
+          await clientRef.current.sendMove(networkMove);
+          console.log('[PlayCard] Move sent, waiting for server sync');
+        } else {
+          console.log('[PlayCard] Stacking move - will send with stack');
         }
-
-        const move = {
-          gameId: config.gameId,
-          playerId: config.localPlayerId,
-          moveType: 'play' as const,
-          payload: { cardIndex },
-          timestamp: Date.now(),
-          clientSequence: moveSequence.current++,
-        };
-
-        await clientRef.current.sendMove(move);
       } catch (error) {
         console.error('Failed to send move:', error);
         setToastMsg('Sync error - please try again');
+        syncRequest();
       }
     },
-    [state, config.gameId, config.localPlayerId],
+    [state, config.gameId, config.localPlayerId, applyMoveToState, syncRequest],
   );
 
   const playStack = useCallback(async () => {
     if (!state || state.stack.length === 0) return;
 
+    console.log('[PlayStack] Attempting to play stack', { 
+      stackLength: state.stack.length, 
+      stack: state.stack.map(c => c.id),
+      wildSuit: state.wildSuit 
+    });
+
     try {
-      setIsPendingMove(true);
+      const actionId = `playStack-${Date.now()}`;
+      const sequence = moveSequence.current++;
       
       // Determine if we need a wildSuit (if any card in stack is Jack or Joker)
       let wildSuit = state.wildSuit;
@@ -316,43 +487,89 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
         wildSuit = 'hearts'; // Default to hearts if not set
       }
 
-      const move = {
+      const move: PendingMove = { 
+        type: 'playStack', 
+        payload: { wildSuit }, 
+        actionId,
+        timestamp: Date.now(),
+        sequence,
+      };
+
+      // Optimistically update local state
+      setState(prevState => {
+        if (!prevState) return prevState;
+        const newState = applyMoveToState(prevState, move, config.localPlayerId);
+        pendingMovesRef.current.push(move);
+        return newState;
+      });
+
+      setIsPendingMove(true);
+
+      const networkMove = {
         gameId: config.gameId,
         playerId: config.localPlayerId,
         moveType: 'playStack' as const,
         payload: { 
-          cards: state.stack,
+          cards: state.stack.map(c => ({ suit: c.suit, value: c.value, id: c.id })),
           wildSuit: wildSuit 
         },
         timestamp: Date.now(),
-        clientSequence: moveSequence.current++,
+        clientSequence: sequence,
+        actionId,
       };
 
-      await clientRef.current.sendMove(move);
-    } catch (error) {
-      setIsPendingMove(false);
-      console.error('Failed to play stack:', error);
-      const errorMsg = error instanceof Error ? error.message : 'Failed to sync stack';
-      setToastMsg(errorMsg);
+      console.log('[PlayStack] FINAL payload being sent:', JSON.stringify(networkMove.payload));
+      console.log('[PlayStack] state.stack at send time:', JSON.stringify(state.stack.map(c => c.id)));
+      await clientRef.current.sendMove(networkMove);
+      console.log('[PlayStack] Success');
+    } catch (error: any) {
+      console.error('[PlayStack] Failed:', error.message);
+      setToastMsg(error.message || 'Failed to sync stack');
+      syncRequest();
     }
-  }, [state, config.gameId, config.localPlayerId]);
+  }, [state, config.gameId, config.localPlayerId, applyMoveToState, syncRequest]);
 
 
   const undoStackCard = useCallback(async (stackIndex: number) => {
     if (!state) return;
 
-    // LOCAL ONLY - No network request needed for undoing a local stack
-    setState(prevState => {
-      if (!prevState || stackIndex < 0 || stackIndex >= prevState.stack.length) return prevState;
-      const newState = { ...prevState, players: prevState.players.map(p => ({ ...p })) };
-      const card = newState.stack.splice(stackIndex, 1)[0];
-      const player = newState.players.find(p => p.id === config.localPlayerId);
-      if (player) {
-        player.hand.push(card);
-      }
-      return newState;
-    });
-  }, [state, config.localPlayerId]);
+    try {
+      const actionId = `undo-${Date.now()}`;
+      const sequence = moveSequence.current++;
+      const move: PendingMove = { 
+        type: 'undoStack', 
+        payload: { stackIndex }, 
+        actionId,
+        timestamp: Date.now(),
+        sequence,
+      };
+
+      // Optimistically update local state
+      setState(prevState => {
+        if (!prevState) return prevState;
+        const newState = applyMoveToState(prevState, move, config.localPlayerId);
+        pendingMovesRef.current.push(move);
+        return newState;
+      });
+
+      setIsPendingMove(true);
+
+      const networkMove = {
+        gameId: config.gameId,
+        playerId: config.localPlayerId,
+        moveType: 'undoStack' as const,
+        payload: { stackIndex },
+        timestamp: Date.now(),
+        clientSequence: moveSequence.current++,
+        actionId,
+      };
+
+      await clientRef.current.sendMove(networkMove);
+    } catch (error) {
+      console.error('Failed to undo stack card:', error);
+      syncRequest();
+    }
+  }, [state, config.gameId, config.localPlayerId, applyMoveToState, syncRequest]);
 
 
 
@@ -360,47 +577,85 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     if (!state) return;
 
     try {
+      const actionId = `draw-${Date.now()}`;
+      const sequence = moveSequence.current++;
+      const move: PendingMove = { 
+        type: 'draw', 
+        payload: {}, 
+        actionId,
+        timestamp: Date.now(),
+        sequence,
+      };
+
+      // Optimistically update local state
+      setState(prevState => {
+        if (!prevState) return prevState;
+        const newState = applyMoveToState(prevState, move, config.localPlayerId);
+        pendingMovesRef.current.push(move);
+        return newState;
+      });
+
       setIsPendingMove(true);
-      const move = {
+      
+      const networkMove = {
         gameId: config.gameId,
         playerId: config.localPlayerId,
         moveType: 'draw' as const,
         payload: {},
         timestamp: Date.now(),
-        clientSequence: moveSequence.current++,
+        clientSequence: sequence,
+        actionId,
       };
 
-      await clientRef.current.sendMove(move);
+      await clientRef.current.sendMove(networkMove);
     } catch (error) {
-      setIsPendingMove(false);
       console.error('Failed to send move:', error);
-      const errorMsg = error instanceof Error ? error.message : 'Failed to send move';
-      setToastMsg(errorMsg);
+      setToastMsg('Failed to draw card');
+      syncRequest();
     }
-  }, [state, config.gameId, config.localPlayerId]);
+  }, [state, config.gameId, config.localPlayerId, applyMoveToState, syncRequest]);
 
   const callLastCard = useCallback(async () => {
     if (!state) return;
 
     try {
+      const actionId = `call-${Date.now()}`;
+      const sequence = moveSequence.current++;
+      const move: PendingMove = { 
+        type: 'callLastCard', 
+        payload: {}, 
+        actionId,
+        timestamp: Date.now(),
+        sequence,
+      };
+
+      // Optimistically update local state
+      setState(prevState => {
+        if (!prevState) return prevState;
+        const newState = applyMoveToState(prevState, move, config.localPlayerId);
+        pendingMovesRef.current.push(move);
+        return newState;
+      });
+
       setIsPendingMove(true);
-      const move = {
+      
+      const networkMove = {
         gameId: config.gameId,
         playerId: config.localPlayerId,
         moveType: 'callLastCard' as const,
         payload: {},
         timestamp: Date.now(),
         clientSequence: moveSequence.current++,
+        actionId,
       };
 
-      await clientRef.current.sendMove(move);
+      await clientRef.current.sendMove(networkMove);
     } catch (error) {
-      setIsPendingMove(false);
       console.error('Failed to send move:', error);
-      const errorMsg = error instanceof Error ? error.message : 'Failed to send move';
-      setToastMsg(errorMsg);
+      setToastMsg('Failed to call Last Card');
+      syncRequest();
     }
-  }, [state, config.gameId, config.localPlayerId]);
+  }, [state, config.gameId, config.localPlayerId, applyMoveToState, syncRequest]);
 
   const rotateHand = useCallback((d: number) => {
     setState(prevState => {
@@ -428,16 +683,6 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
 
   const getLocalPlayerIndex = useCallback((players: any[], playerId: number) => {
     return players.findIndex(p => p.id === playerId);
-  }, []);
-
-  const syncRequest = useCallback(async () => {
-    try {
-      const syncedState = await clientRef.current.syncRequest();
-      setState(syncedState);
-    } catch (error) {
-      console.error('Failed to request sync:', error);
-      setToastMsg('Failed to sync with server');
-    }
   }, []);
 
   const leaveGame = useCallback(async () => {
@@ -547,6 +792,10 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     setModal(null);
   }, [rematchStatus]);
 
+  const consumeAnimTrigger = useCallback(() => {
+    setAnimTriggers({});
+  }, []);
+
   const is1v1 = state && state.players && state.players.length === 2;
 
   return {
@@ -574,5 +823,6 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
     acceptRematch,
     declineRematch,
     cancelRematch,
+    animTriggers,
   };
 }

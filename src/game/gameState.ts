@@ -43,6 +43,7 @@ export interface GameState {
   lastActionMessage?: string;
   lastActionPlayerId?: number;
   lastActionId?: string;
+  version?: number;
 }
 
 export interface GameMoveResult {

@@ -2,6 +2,7 @@ import { useGame } from '../game/useGame';
 import { useServerMultiplayerGame, ServerMultiplayerGameConfig } from '../hooks/useServerMultiplayerGame';
 import { cardUrl, Card } from '../game/engine';
 import { useIsMobile } from '../hooks/use-mobile';
+import { useEffect } from 'react';
 
 interface LastCardGameProps {
   config?: {
@@ -27,6 +28,16 @@ const MultiplayerGameView = ({ config, onBackToMode }: { config: { gameId: strin
     players: [],
   };
   const multiGame = useServerMultiplayerGame(serverConfig);
+  
+  // Consume animation triggers after they've been shown
+  useEffect(() => {
+    if (multiGame.animTriggers && Object.keys(multiGame.animTriggers).length > 0) {
+      const timer = setTimeout(() => {
+        multiGame.animTriggers;
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [multiGame.animTriggers]);
   
   if (!multiGame.state) {
     return (
@@ -69,6 +80,7 @@ const MultiplayerGameView = ({ config, onBackToMode }: { config: { gameId: strin
       acceptRematch={multiGame.acceptRematch}
       declineRematch={multiGame.declineRematch}
       cancelRematch={multiGame.cancelRematch}
+      animTriggers={multiGame.animTriggers}
     />
   );
 };
@@ -140,13 +152,19 @@ interface GameUIProps {
   acceptRematch?: () => void;
   declineRematch?: () => void;
   cancelRematch?: () => void;
+  animTriggers?: {
+    stackPlayed?: boolean;
+    cardPlayed?: boolean;
+    turnChange?: boolean;
+    penaltyApplied?: boolean;
+  };
 }
 
 const GameUI = ({
   G, gameManager, toastMsg, statusMsg, modal, setModal, 
   playCard, playStack, undoStackCard, drawCard, callLastCard, rotateHand,
   leaveGame, newGame, onBackToMode, localPlayerIndex, mode,
-  is1v1, rematchStatus, isPending, requestRematch, acceptRematch, declineRematch, cancelRematch
+  is1v1, rematchStatus, isPending, requestRematch, acceptRematch, declineRematch, cancelRematch, animTriggers
 }: GameUIProps) => {
   const isMobile = useIsMobile();
   const player = localPlayerIndex !== -1 ? G.players[localPlayerIndex] : null;
@@ -158,8 +176,8 @@ const GameUI = ({
   
   // Logical turn state (for rendering visibility/highlights)
   const isMyTurn = G.turnIndex === localPlayerIndex && !G.over && !isEliminated;
-  // Interaction state (for blocking clicks during network sync)
-  const isInteractionEnabled = isMyTurn && !isPending && !isGameOver;
+  // Interaction state (No longer blocks on isPending to allow rapid moves)
+  const isInteractionEnabled = isMyTurn && !isGameOver;
   
   const canLC = player && 
                 gameManager.canCallLastCard(player) && 
@@ -245,7 +263,7 @@ const GameUI = ({
           return (
             <div key={p.id} className={`absolute flex flex-col items-center gap-1 z-[15] ${positions[posKey] || positions[2]}`}>
               <div className="text-foreground/60 text-[11px] tracking-wider uppercase flex items-center gap-1.5 mb-1">
-                <span className={`w-2 h-2 rounded-full bg-gold shadow-[0_0_8px_hsl(var(--gold))] ${G.turnIndex === p.originalIndex ? 'animate-pulse' : 'opacity-0'}`} />
+                <span className={`w-2 h-2 rounded-full bg-gold shadow-[0_0_8px_hsl(var(--gold))] ${G.turnIndex === p.originalIndex && animTriggers?.turnChange ? 'animate-pulse' : (G.turnIndex === p.originalIndex ? 'animate-pulse' : 'opacity-0')}`} />
                 <span>{p.name} {p.isEliminated ? '(OUT)' : ''}</span>
               </div>
               <div className="flex">
