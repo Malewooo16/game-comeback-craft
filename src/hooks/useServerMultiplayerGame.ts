@@ -201,6 +201,14 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
               setRematchStatus('idle');
               setModal(null);
               setPendingRematchOpponent(null);
+              setToastMsg(null); // Clear any stale notifications
+              clearTimeout(toastTimer.current);
+            }
+
+            // Also clear toast when new round starts (even if not from game over)
+            // but only if there's a fresh lastActionId for this round
+            if (!prevState?.over && !reconciledState.over && reconciledState.lastActionId) {
+              // New move in progress - keep toast handling normal
             }
 
             // Detect animation triggers
@@ -228,11 +236,16 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
           
           setIsPendingMove(pendingMovesRef.current.length > 0);
           
-          if (updatedState.lastActionMessage && updatedState.lastActionId !== lastActionIdRef.current) {
-            lastActionIdRef.current = updatedState.lastActionId || null;
+          // Only show toast for new messages (not stale ones from previous game/round)
+          if (updatedState.lastActionMessage && updatedState.lastActionId) {
+            lastActionIdRef.current = updatedState.lastActionId;
             setToastMsg(updatedState.lastActionMessage);
             clearTimeout(toastTimer.current);
             toastTimer.current = setTimeout(() => setToastMsg(null), 1500);
+          } else if (!updatedState.lastActionMessage) {
+            // Clear toast when there's no message (e.g., new round started)
+            setToastMsg(null);
+            clearTimeout(toastTimer.current);
           }
 
           // Handle game over state
