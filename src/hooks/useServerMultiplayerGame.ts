@@ -48,12 +48,13 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
 
         // Listen for game state updates via Pusher
         const unsubscribeState = client.on('game-state', (updatedState: GameState) => {
-          console.log('State update from Pusher');
+          console.log('State update from Pusher', { over: updatedState.over, winner: updatedState.players?.find(p => p.hand.length === 0)?.name });
           
           setState(prevState => {
             // If we were in a "Game Over" state and the new state is NOT over,
             // it means a new round or rematch has started. Reset UI states.
             if (prevState?.over && !updatedState.over) {
+              console.log('[State] Game over -> not over, resetting UI');
               setRematchStatus('idle');
               setModal(null);
               setPendingRematchOpponent(null);
@@ -70,35 +71,42 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
             toastTimer.current = setTimeout(() => setToastMsg(null), 1500);
           }
 
+          // Handle game over state
           if (updatedState.over) {
+            console.log('[State] Game is over, checking modal state');
+            
+            // Determine winner from state
+            let winner = updatedState.players.find(p => p.hand.length === 0 && !p.victoryDrawPending && !p.isEliminated);
+            if (!winner) {
+              const activePlayers = updatedState.players.filter(p => !p.isEliminated);
+              if (activePlayers.length === 1) {
+                winner = activePlayers[0];
+              }
+            }
+            
+            const newTitle = winner?.id === config.localPlayerId ? 'You Win!' : (winner?.name || 'Someone') + ' Wins!';
+            console.log('[State] Winner:', winner?.name, 'Local player:', config.localPlayerId, 'Title:', newTitle);
+            
+            // ALWAYS set the modal when game is over, unless there's already a game over modal
+            // This ensures both winner and loser see the modal
             setModal(prevModal => {
-              // If already showing a game over modal (with specific title), keep it
-              if (prevModal && prevModal.title.match(/You Win!|Wins!|Game Over/)) {
+              // If already showing a game over modal, keep it
+              if (prevModal && prevModal.title.match(/You Win!|Wins!|Game Over|Rematch/)) {
+                console.log('[State] Keeping existing modal:', prevModal.title);
                 return prevModal;
               }
-
-              // If game is over and we don't have a game over modal, show one
-              // But only if there isn't already a modal (to prevent overwriting other modals)
-              if (prevModal) {
-                return prevModal;
-              }
-
-              let winner = updatedState.players.find(p => p.hand.length === 0 && !p.victoryDrawPending && !p.isEliminated);
-              if (!winner) {
-                const activePlayers = updatedState.players.filter(p => !p.isEliminated);
-                if (activePlayers.length === 1) {
-                  winner = activePlayers[0];
-                }
-              }
-
-              const newTitle = winner?.id === config.localPlayerId ? 'You Win!' : (winner?.name || 'Someone') + ' Wins!';
               
-              // If the title is already set to this, don't update (prevents flicker)
-              if (prevModal?.title === newTitle) return prevModal;
-
+              // Also preserve other important modals (like Rules)
+              if (prevModal && prevModal.title === '📖 Rules') {
+                return prevModal;
+              }
+              
+              console.log('[State] Setting new game over modal:', newTitle);
               return {
                 title: newTitle,
-                message: 'Game over!',
+                message: winner?.id === config.localPlayerId 
+                  ? 'Congratulations! You won the game!' 
+                  : `${winner?.name || 'Someone'} won the game. Better luck next time!`,
               };
             });
             setStatusMsg('Game Over');
