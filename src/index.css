@@ -89,3 +89,14 @@
     scrollbar-color: hsl(var(--gold) / 0.2) transparent;
   }
 }
+
+@keyframes flyToHand {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(calc(-50% + 50px), calc(-50% + 250px)) scale(0.5);
+    opacity: 0;
+  }
+}

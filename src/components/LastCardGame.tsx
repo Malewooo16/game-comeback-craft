@@ -2,7 +2,7 @@ import { useGame } from '../game/useGame';
 import { useServerMultiplayerGame, ServerMultiplayerGameConfig } from '../hooks/useServerMultiplayerGame';
 import { cardUrl, Card } from '../game/engine';
 import { useIsMobile } from '../hooks/use-mobile';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 interface LastCardGameProps {
   config?: {
@@ -171,6 +171,10 @@ const GameUI = ({
   const topCard = G.discard[G.discard.length - 1];
   const isEliminated = player?.isEliminated;
   
+  // Draw animation state
+  const [drawnCard, setDrawnCard] = useState<Card | null>(null);
+  const [isAnimatingDraw, setIsAnimatingDraw] = useState(false);
+  
   // Game over state - disable all interactions
   const isGameOver = G.over;
   
@@ -178,6 +182,23 @@ const GameUI = ({
   const isMyTurn = G.turnIndex === localPlayerIndex && !G.over && !isEliminated;
   // Interaction state (No longer blocks on isPending to allow rapid moves)
   const isInteractionEnabled = isMyTurn && !isGameOver;
+  
+  // Handle draw with animation
+  const handleDraw = () => {
+    if (!isInteractionEnabled || G.deck.length === 0) return;
+    
+    // Get a random card from deck for animation (visual only)
+    const randomCard = G.deck[Math.floor(Math.random() * G.deck.length)];
+    setDrawnCard(randomCard);
+    setIsAnimatingDraw(true);
+    
+    // Trigger actual draw after brief delay
+    setTimeout(() => {
+      drawCard();
+      setIsAnimatingDraw(false);
+      setDrawnCard(null);
+    }, 300);
+  };
   
   const canLC = player && 
                 gameManager.canCallLastCard(player) && 
@@ -275,10 +296,10 @@ const GameUI = ({
                     }} />
                 ))}
               </div>
-              {/* Opp stack */}
-              {G.turnIndex === p.originalIndex && (G.oppStack?.length > 0 || G.stack?.length > 0) && (
+              {/* Opp stack - only show opponent's stack when it's their turn */}
+              {G.turnIndex === p.originalIndex && G.oppStack?.length > 0 && (
                 <div className="flex items-center justify-center min-h-[50px] mt-2">
-                  {(G.oppStack?.length > 0 ? G.oppStack : G.stack).map((c: Card, stackIdx: number, arr: Card[]) => (
+                  {G.oppStack.map((c: Card, stackIdx: number, arr: Card[]) => (
                     <div key={stackIdx} className="w-9 h-[50px] rounded bg-white border border-gray-300 overflow-hidden shadow-lg"
                       style={{ transform: `translateX(${(stackIdx - (arr.length - 1) / 2) * 15}px) rotate(${(stackIdx - (arr.length - 1) / 2) * 8}deg)` }}>
                       <img src={cardUrl(c)} alt={c.id} className="w-full h-full object-contain" />
@@ -295,15 +316,32 @@ const GameUI = ({
           <div className="flex gap-8 items-center">
             {/* Draw pile */}
             <div className="text-center">
-              <div className="relative cursor-pointer group" onClick={isInteractionEnabled ? drawCard : undefined}
+              <div className="relative cursor-pointer group" onClick={isInteractionEnabled ? handleDraw : undefined}
                 style={{ opacity: isInteractionEnabled ? 1 : 0.5 }}>
-                <div className="w-[72px] h-[101px] rounded-[7px] border-2 border-gold/50 flex items-center justify-center transition-transform group-hover:-translate-y-1"
+                <div className={`w-[72px] h-[101px] rounded-[7px] border-2 border-gold/50 flex items-center justify-center transition-transform group-hover:-translate-y-1 ${isAnimatingDraw ? 'scale-95' : ''}`}
                   style={{
                     background: 'linear-gradient(135deg, #1a237e 0%, #283593 50%, #1a237e 100%)',
                     boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
                   }}>
-                  <span className="text-gold/40 text-2xl">♠</span>
+                  {drawnCard ? (
+                    <div className="w-[68px] h-[97px] rounded-[5px] bg-white border-[1px] border-gray-300 overflow-hidden">
+                      <img src={cardUrl(drawnCard)} alt="drawn" className="w-full h-full object-contain" />
+                    </div>
+                  ) : (
+                    <span className="text-gold/40 text-2xl">♠</span>
+                  )}
                 </div>
+                {/* Animated card flying to hand */}
+                {isAnimatingDraw && drawnCard && (
+                  <div className="absolute left-1/2 top-1/2 pointer-events-none z-50"
+                    style={{
+                      animation: 'flyToHand 400ms ease-out forwards',
+                    }}>
+                    <div className="w-[60px] h-[84px] rounded-[5px] bg-white border border-gray-300 shadow-xl overflow-hidden">
+                      <img src={cardUrl(drawnCard)} alt="flying" className="w-full h-full object-contain" />
+                    </div>
+                  </div>
+                )}
                 <div className="absolute -top-2.5 -right-2.5 bg-gold text-primary-foreground text-[11px] font-bold w-[22px] h-[22px] rounded-full flex items-center justify-center z-[5]">
                   {G.deck.length}
                 </div>
@@ -329,9 +367,12 @@ const GameUI = ({
                   </div>
                 )}
               </div>
-              <div className={`text-[10px] tracking-[2px] uppercase mt-1.5 font-bold ${G.stack?.length > 0 ? 'text-emerald-400' : 'text-gold/50'}`}>
-                {G.stack?.length > 0 ? 'Stack' : 'Discard'}
-              </div>
+              {/* Only show Stack label when it's my turn and I have a stack */}
+              {isMyTurn && G.stack?.length > 0 && (
+                <div className="text-[10px] tracking-[2px] uppercase mt-1.5 font-bold text-emerald-400">
+                  Stack
+                </div>
+              )}
             </div>
           </div>
 
