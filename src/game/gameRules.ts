@@ -232,25 +232,25 @@ export function checkVictory(state: GameState, player: Player, playedCards: Card
   return { won: false };
 }
 
-export function applyVictoryPenalty(state: GameState, player: Player): GameState {
+export function applyVictoryPenalty(state: GameState, playerIndex: number): GameState {
   const newState = { ...state, players: state.players.map(p => ({ ...p })) };
-  const targetPlayer = newState.players[newState.players.indexOf(player)];
+  const targetPlayer = newState.players[playerIndex];
   const { state: drawState, cards } = drawCards(newState, 2);
   targetPlayer.hand.push(...cards);
   return drawState;
 }
 
-export function applyVictoryDraw(state: GameState, player: Player): GameState {
+export function applyVictoryDraw(state: GameState, playerIndex: number): GameState {
   const newState = { ...state, players: state.players.map(p => ({ ...p })) };
-  const targetPlayer = newState.players[newState.players.indexOf(player)];
+  const targetPlayer = newState.players[playerIndex];
   targetPlayer.victoryDrawPending = true;
   targetPlayer.victoryWild = state.jokerWild;
   return newState;
 }
 
-export function processVictoryDraw(state: GameState, player: Player, drawnCard: Card): { state: GameState; won: boolean } {
+export function processVictoryDraw(state: GameState, playerIndex: number, drawnCard: Card): { state: GameState; won: boolean } {
   const newState = { ...state, players: state.players.map(p => ({ ...p })) };
-  const targetPlayer = newState.players[newState.players.indexOf(player)];
+  const targetPlayer = newState.players[playerIndex];
 
   if (!isSpecial(drawnCard)) {
     const tc = topCard(newState);
@@ -319,9 +319,9 @@ export function playCard(
       }
 
       if (victory.reason === 'not-called') {
-        resultState = applyVictoryPenalty(resultState, player);
+        resultState = applyVictoryPenalty(resultState, playerIndex);
       } else if (victory.reason === 'jack-bridge' || victory.reason === 'special-finish') {
-        resultState = applyVictoryDraw(resultState, player);
+        resultState = applyVictoryDraw(resultState, playerIndex);
       }
 
       player.lastCalled = false;
@@ -365,9 +365,9 @@ export function playCard(
     }
 
     if (victory.reason === 'not-called') {
-      resultState = applyVictoryPenalty(resultState, player);
+      resultState = applyVictoryPenalty(resultState, playerIndex);
     } else if (victory.reason === 'jack-bridge' || victory.reason === 'special-finish') {
-      resultState = applyVictoryDraw(resultState, player);
+      resultState = applyVictoryDraw(resultState, playerIndex);
     }
 
     player.lastCalled = false;
@@ -407,10 +407,10 @@ export function playStack(state: GameState, playerIndex: number, wildSuit?: stri
   }
 
   if (victory.reason === 'not-called') {
-    const penaltyState = applyVictoryPenalty(newState, player);
+    const penaltyState = applyVictoryPenalty(newState, playerIndex);
     Object.assign(newState, penaltyState);
   } else if (victory.reason === 'jack-bridge' || victory.reason === 'special-finish') {
-    const drawState = applyVictoryDraw(newState, player);
+    const drawState = applyVictoryDraw(newState, playerIndex);
     Object.assign(newState, drawState);
   }
 
@@ -474,7 +474,7 @@ export function drawCard(state: GameState, playerIndex: number): GameMoveResult 
       if (cards.length === 0) return { state: newState, moveType: 'draw', success: false, message: 'Deck empty' };
       
       const drawnCard = cards[0];
-      const { state: finalState, won } = processVictoryDraw(drawState, drawState.players[playerIndex], drawnCard);
+      const { state: finalState, won } = processVictoryDraw(drawState, playerIndex, drawnCard);
       
       if (won) {
         finalState.over = true;
