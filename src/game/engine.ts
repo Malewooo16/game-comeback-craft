@@ -412,6 +412,7 @@ export class GameEngine {
 
   undoStackCard(idx: number, onChange: () => void) {
     const G = this.state;
+    if (idx < 0 || idx >= G.stack.length) return;
     const card = G.stack.splice(idx, 1)[0];
     G.players[0].hand.push(card);
     if (G.stack.length === 0) this.status("Stack cleared");

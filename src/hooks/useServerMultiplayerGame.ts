@@ -237,12 +237,12 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
           setIsPendingMove(pendingMovesRef.current.length > 0);
           
           // Only show toast for new messages (not stale ones from previous game/round)
-          if (updatedState.lastActionMessage && updatedState.lastActionId) {
+          if (updatedState.lastActionMessage) {
             lastActionIdRef.current = updatedState.lastActionId;
             setToastMsg(updatedState.lastActionMessage);
             clearTimeout(toastTimer.current);
             toastTimer.current = setTimeout(() => setToastMsg(null), 1500);
-          } else if (!updatedState.lastActionMessage) {
+          } else {
             // Clear toast when there's no message (e.g., new round started)
             setToastMsg(null);
             clearTimeout(toastTimer.current);
@@ -545,44 +545,25 @@ export function useServerMultiplayerGame(config: ServerMultiplayerGameConfig) {
 
   const undoStackCard = useCallback(async (stackIndex: number) => {
     if (!state) return;
-
-    try {
-      const actionId = `undo-${Date.now()}`;
-      const sequence = moveSequence.current++;
-      const move: PendingMove = { 
-        type: 'undoStack', 
-        payload: { stackIndex }, 
-        actionId,
-        timestamp: Date.now(),
-        sequence,
-      };
-
-      // Optimistically update local state
-      setState(prevState => {
-        if (!prevState) return prevState;
-        const newState = applyMoveToState(prevState, move, config.localPlayerId);
-        pendingMovesRef.current.push(move);
-        return newState;
-      });
-
-      setIsPendingMove(true);
-
-      const networkMove = {
-        gameId: config.gameId,
-        playerId: config.localPlayerId,
-        moveType: 'undoStack' as const,
-        payload: { stackIndex },
-        timestamp: Date.now(),
-        clientSequence: moveSequence.current++,
-        actionId,
-      };
-
-      await clientRef.current.sendMove(networkMove);
-    } catch (error) {
-      console.error('Failed to undo stack card:', error);
-      syncRequest();
+    if (stackIndex < 0 || stackIndex >= state.stack.length) {
+      setToastMsg('Invalid stack index');
+      return;
     }
-  }, [state, config.gameId, config.localPlayerId, applyMoveToState, syncRequest]);
+
+    const actionId = `undo-${Date.now()}`;
+    const move: PendingMove = { 
+      type: 'undoStack', 
+      payload: { stackIndex }, 
+      actionId,
+      timestamp: Date.now(),
+      sequence: moveSequence.current++,
+    };
+
+    setState(prevState => {
+      if (!prevState) return prevState;
+      return applyMoveToState(prevState, move, config.localPlayerId);
+    });
+  }, [state, config.localPlayerId, applyMoveToState]);
 
 
 
